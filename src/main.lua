@@ -1,11 +1,12 @@
--- language: Lua, file: ETX_v1_2.lua, target: Roblox Project Delta
--- ETX v1.2 — Aimbot + Bullet Drop + ESP + HP Bar + Skeleton + China Hat + Vehicle ESP + Preview + Mod Check
+-- language: Lua, file: ETX_v1_3.lua, target: Roblox Project Delta
+-- ETX v1.3 — Aimbot + Wiki Bullet Drop + ESP + HP Bar + Skeleton + China Hat + Vehicle ESP + Preview (animation) + Mod Check + FullBright + Grass/Leaves Remover
 
 -- ==================== SERVICES ====================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
 local CoreGui = game:GetService("CoreGui")
 local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
@@ -14,7 +15,7 @@ local LocalPlayer = Players.LocalPlayer
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Window = Rayfield:CreateWindow({
-    Name = "Project Delta | ETX v1.2",
+    Name = "Project Delta | ETX v1.3",
     LoadingTitle = "Đang tải ETX...",
     LoadingSubtitle = "by ANON",
     ConfigurationSaving = { Enabled = true, FolderName = "ANON_PD", FileName = "ETX_config" },
@@ -30,7 +31,7 @@ local AimbotMode = "Toggle"
 local FOV = 150
 local TargetPart = "Head"
 local PredictionEnabled = true
-local BulletSpeed = 404
+local BulletSpeed = 715
 local BulletGravity = 196.2
 local Smoothness = 0.15
 local MaxDistance = 5000
@@ -92,11 +93,20 @@ local PreviewSize = UDim2.new(0, 200, 0, 200)
 local ModeratorAlertEnabled = true
 local InvisibleAlertEnabled = true
 local INVIS_THRESHOLD = 0.98
-local FLAG_CONSECUTIVE_FRAMES = 15
+local FLAG_CONSECUTIVE_FRAMES = 1
 local InvisCounter = {}
 local Flagged = {}
 local MOD_GROUP_IDS = {}
 local MOD_KEYWORDS = {"moderator", "admin", "owner", "staff"}
+
+-- FullBright
+local FullBrightEnabled = false
+local OriginalLighting = {}
+
+-- Grass / Leaves Remover
+local GrassRemoverEnabled = false
+local LeavesRemoverEnabled = false
+local HiddenObjects = {}   -- [object] = original properties
 
 -- Targetline
 local TargetLineEnabled = true
@@ -119,6 +129,66 @@ if FOVCircle then
     FOVCircle.Radius = FOV
     FOVCircle.Filled = false
 end
+
+-- ==================== WIKI AMMO DATA ====================
+-- Bảng muzzle velocity (m/s) tổng hợp từ Wiki Project Delta
+local AMMO_VELOCITY = {
+    -- Pistol / SMG
+    ["9x18"] = 359,
+    ["9x18 AP"] = 383,
+    ["9x18 TFZ"] = 404,
+    ["9x19"] = 465,
+    ["9x19 AP"] = 500,
+    [".45"] = 465,
+    [".45 AP"] = 515,
+    ["7.62x25"] = 460,
+    ["7.62x25 AP"] = 484,
+
+    -- Rifle
+    ["7.62x39"] = 715,
+    ["7.62x39 AP"] = 767,
+    ["5.56x45"] = 940,
+    ["5.56x45 AP"] = 990,
+    ["5.45x39"] = 890,
+    ["5.45x39 AP"] = 940,
+    ["7.62x51"] = 850,
+    ["7.62x51 AP"] = 900,
+    ["7.62x54R"] = 885,
+    ["7.62x54R AP"] = 935,
+
+    -- Shotgun
+    ["12ga Slug"] = 405,
+    ["12ga Flechette"] = 340,
+    ["12ga AP-20"] = 625,
+
+    -- Special
+    ["9x39"] = 450,
+    ["9x39 AP"] = 490,
+    [".300 BLK"] = 550,
+    [".300 BLK AP"] = 600,
+    ["85mm PG-7V"] = 200,
+}
+
+-- Ánh xạ tên súng → caliber (dựa trên wiki Project Delta)
+local GUN_CALIBER_MAP = {
+    -- Pistol
+    ["makarov"] = "9x18", ["pm"] = "9x18",
+    ["mp443"] = "9x19", ["glock"] = "9x19",
+    ["m1911"] = ".45", ["colt"] = ".45",
+    ["tt"] = "7.62x25", ["tokarev"] = "7.62x25",
+    -- Rifle
+    ["akmn"] = "7.62x39", ["akm"] = "7.62x39",
+    ["ak74"] = "5.45x39", ["aks74"] = "5.45x39",
+    ["m4a1"] = "5.56x45", ["m16"] = "5.56x45",
+    ["adar"] = "5.56x45", ["falm"] = "7.62x51",
+    ["fn fal"] = "7.62x51", ["svd"] = "7.62x54R",
+    ["pkm"] = "7.62x54R", ["mosin"] = "7.62x54R",
+    -- Shotgun
+    ["saiga"] = "12ga", ["izh"] = "12ga",
+    -- Special
+    ["as val"] = "9x39", ["vss"] = "9x39",
+    ["m700"] = "7.62x51", ["sr-25"] = "7.62x51",
+}
 
 -- ==================== HELPERS ====================
 local function GetTargetPart(character, partName)
@@ -149,72 +219,111 @@ local function InputMatches(input)
     return false
 end
 
--- ==================== GUN VELOCITY SCAN ====================
+-- ==================== WIKI-BASED GUN VELOCITY SCAN ====================
+local function GetAmmoKey(caliber, ammoType)
+    local cal = string.lower(caliber or ""):gsub("%s", "")
+    local typ = string.lower(ammoType or "")
+
+    if cal:find("9x18") then
+        if typ:find("tfz") then return "9x18 TFZ"
+        elseif typ:find("ap") or typ:find("armor") then return "9x18 AP"
+        else return "9x18" end
+    elseif cal:find("9x19") then
+        if typ:find("ap") or typ:find("armor") then return "9x19 AP"
+        else return "9x19" end
+    elseif cal:find("45") then
+        if typ:find("ap") or typ:find("armor") then return ".45 AP"
+        else return ".45" end
+    elseif cal:find("7.62x25") then
+        if typ:find("ap") or typ:find("armor") then return "7.62x25 AP"
+        else return "7.62x25" end
+    elseif cal:find("7.62x39") then
+        if typ:find("ap") or typ:find("armor") then return "7.62x39 AP"
+        else return "7.62x39" end
+    elseif cal:find("5.56x45") then
+        if typ:find("ap") or typ:find("armor") then return "5.56x45 AP"
+        else return "5.56x45" end
+    elseif cal:find("5.45x39") then
+        if typ:find("ap") or typ:find("armor") then return "5.45x39 AP"
+        else return "5.45x39" end
+    elseif cal:find("7.62x51") then
+        if typ:find("ap") or typ:find("armor") then return "7.62x51 AP"
+        else return "7.62x51" end
+    elseif cal:find("7.62x54") then
+        if typ:find("ap") or typ:find("armor") then return "7.62x54R AP"
+        else return "7.62x54R" end
+    elseif cal:find("12ga") or cal:find("12gauge") then
+        if typ:find("slug") then return "12ga Slug"
+        elseif typ:find("flechette") then return "12ga Flechette"
+        elseif typ:find("ap") or typ:find("armor") then return "12ga AP-20"
+        else return "12ga Slug" end
+    elseif cal:find("9x39") then
+        if typ:find("ap") or typ:find("armor") then return "9x39 AP"
+        else return "9x39" end
+    elseif cal:find("300") or cal:find("blk") then
+        if typ:find("ap") or typ:find("armor") then return ".300 BLK AP"
+        else return ".300 BLK" end
+    elseif cal:find("85") then
+        return "85mm PG-7V"
+    end
+    return nil
+end
+
 local function ScanGunVelocity()
     local character = LocalPlayer.Character
     if not character then return nil end
     local tool = character:FindFirstChildOfClass("Tool")
     if not tool then return nil end
 
-    local keywords = {"velocity", "speed", "muzzle", "m/s", "sơ tốc"}
+    local caliber, ammoType = nil, nil
 
-    local function ExtractNumber(v)
-        if type(v) == "number" then return v end
-        if type(v) == "string" then
-            local n = string.match(v, "(%d+%.?%d*)%s*m/s")
-                or string.match(v, "(%d+%.?%d*)")
-            if n then return tonumber(n) end
-        end
-        return nil
-    end
-
-    local function NameMatches(name)
-        local lower = string.lower(name)
-        for _, kw in ipairs(keywords) do
-            if string.find(lower, kw, 1, true) then return true end
-        end
-        return false
-    end
-
+    -- Attributes
     for _, attr in ipairs(tool:GetAttributes()) do
-        if NameMatches(attr) then
-            local n = ExtractNumber(tool:GetAttribute(attr))
-            if n then return n end
+        local lower = string.lower(attr)
+        if lower:find("caliber") or lower:find("ammotype") or lower:find("ammo") then
+            local val = tool:GetAttribute(attr)
+            if type(val) == "string" then
+                if lower:find("caliber") then caliber = val
+                else ammoType = val end
+            end
         end
     end
 
+    -- Descendants (ValueBase + GUI Text)
     for _, d in ipairs(tool:GetDescendants()) do
-        if d:IsA("ValueBase") and NameMatches(d.Name) then
-            local n = ExtractNumber(d.Value)
-            if n then return n end
-        elseif d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+        if d:IsA("ValueBase") then
+            local lower = string.lower(d.Name)
+            if lower:find("caliber") then caliber = tostring(d.Value)
+            elseif lower:find("ammotype") or lower:find("ammo") then ammoType = tostring(d.Value) end
+        elseif d:IsA("TextLabel") or d:IsA("TextButton") then
             local text = d.Text or ""
             local lower = string.lower(text)
-            if string.find(lower, "velocity", 1, true) or string.find(lower, "speed", 1, true) then
-                local n = ExtractNumber(text)
-                if n and n >= 50 and n <= 3000 then return n end
-            end
-        elseif d:IsA("StringValue") then
-            if NameMatches(d.Name) or string.find(string.lower(d.Value or ""), "velocity", 1, true) then
-                local n = ExtractNumber(d.Value)
-                if n then return n end
+            if lower:find("caliber") then
+                local c = text:match("[:%s]+([%w%.]+)")
+                if c then caliber = c end
+            elseif lower:find("ammotype") or lower:find("ammo") then
+                local a = text:match("[:%s]+([%w%.]+)")
+                if a then ammoType = a end
             end
         end
     end
 
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    if pg then
-        for _, d in ipairs(pg:GetDescendants()) do
-            if d:IsA("TextLabel") and d.Visible then
-                local text = d.Text or ""
-                local lower = string.lower(text)
-                if string.find(lower, "velocity", 1, true) then
-                    local n = tonumber(string.match(text, "(%d+)%s*m/s"))
-                        or tonumber(string.match(text, "(%d+)"))
-                    if n and n >= 50 and n <= 3000 then return n end
-                end
+    -- Fallback: gun name → caliber
+    if not caliber then
+        local toolName = string.lower(tool.Name)
+        for pattern, cal in pairs(GUN_CALIBER_MAP) do
+            if toolName:find(pattern) then
+                caliber = cal
+                break
             end
         end
+    end
+
+    if not caliber then return nil end
+
+    local key = GetAmmoKey(caliber, ammoType)
+    if key and AMMO_VELOCITY[key] then
+        return AMMO_VELOCITY[key]
     end
     return nil
 end
@@ -236,6 +345,124 @@ local function CalculateBulletDrop(targetPos, speed, gravity)
     local t = dist / speed
     local drop = 0.5 * gravity * t * t
     return targetPos + Vector3.new(0, drop, 0)
+end
+
+-- ==================== FULLBRIGHT ====================
+local function SaveOriginalLighting()
+    OriginalLighting = {
+        Ambient = Lighting.Ambient,
+        OutdoorAmbient = Lighting.OutdoorAmbient,
+        Brightness = Lighting.Brightness,
+        ClockTime = Lighting.ClockTime,
+        GlobalShadows = Lighting.GlobalShadows,
+        FogEnd = Lighting.FogEnd,
+        FogStart = Lighting.FogStart,
+        FogColor = Lighting.FogColor,
+        ExposureCompensation = Lighting.ExposureCompensation,
+        EnvironmentDiffuseScale = Lighting.EnvironmentDiffuseScale,
+        EnvironmentSpecularScale = Lighting.EnvironmentSpecularScale,
+    }
+end
+
+local function ApplyFullBright()
+    SaveOriginalLighting()
+    Lighting.Ambient = Color3.fromRGB(178, 178, 178)
+    Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
+    Lighting.Brightness = 3
+    Lighting.ClockTime = 14
+    Lighting.GlobalShadows = false
+    Lighting.FogEnd = 1e6
+    Lighting.FogStart = 1e6
+    Lighting.FogColor = Color3.fromRGB(200, 200, 200)
+    Lighting.ExposureCompensation = 0.5
+    Lighting.EnvironmentDiffuseScale = 1
+    Lighting.EnvironmentSpecularScale = 1
+end
+
+local function RestoreLighting()
+    if not OriginalLighting.Ambient then return end
+    for k, v in pairs(OriginalLighting) do
+        pcall(function() Lighting[k] = v end)
+    end
+end
+
+-- ==================== GRASS / LEAVES REMOVER ====================
+local GRASS_KEYWORDS = {"grass", "foliage", "bush", "shrub", "plant"}
+local LEAVES_KEYWORDS = {"leaf", "leaves", "tree", "branch", "pine", "oak", "canopy"}
+
+local function NameMatches(name, keywords)
+    local lower = string.lower(name)
+    for _, kw in ipairs(keywords) do
+        if lower:find(kw, 1, true) then return true end
+    end
+    return false
+end
+
+local function HideObject(obj, tag)
+    if HiddenObjects[obj] then return end
+    local store = {}
+    if obj:IsA("BasePart") then
+        store.Transparency = obj.Transparency
+        store.CanCollide = obj.CanCollide
+        store.CanQuery = obj.CanQuery
+        store.CanTouch = obj.CanTouch
+        pcall(function() obj.Transparency = 1 end)
+        pcall(function() obj.CanCollide = false end)
+        pcall(function() obj.CanQuery = false end)
+        pcall(function() obj.CanTouch = false end)
+    elseif obj:IsA("Model") then
+        for _, d in ipairs(obj:GetDescendants()) do
+            if d:IsA("BasePart") then
+                store[d] = { Transparency = d.Transparency, CanCollide = d.CanCollide }
+                pcall(function() d.Transparency = 1 end)
+                pcall(function() d.CanCollide = false end)
+            end
+        end
+    end
+    HiddenObjects[obj] = { store = store, tag = tag }
+end
+
+local function ShowObject(obj)
+    local data = HiddenObjects[obj]
+    if not data then return end
+    if obj:IsA("BasePart") then
+        pcall(function() obj.Transparency = data.store.Transparency end)
+        pcall(function() obj.CanCollide = data.store.CanCollide end)
+        pcall(function() obj.CanQuery = data.store.CanQuery end)
+        pcall(function() obj.CanTouch = data.store.CanTouch end)
+    elseif obj:IsA("Model") then
+        for part, s in pairs(data.store) do
+            if part and part.Parent then
+                pcall(function() part.Transparency = s.Transparency end)
+                pcall(function() part.CanCollide = s.CanCollide end)
+            end
+        end
+    end
+    HiddenObjects[obj] = nil
+end
+
+local function ScanWorldFor(tag, keywords)
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") or obj:IsA("Model") then
+            if NameMatches(obj.Name, keywords) then
+                HideObject(obj, tag)
+            end
+        end
+    end
+end
+
+local function RemoveAllGrass()
+    ScanWorldFor("grass", GRASS_KEYWORDS)
+end
+
+local function RemoveAllLeaves()
+    ScanWorldFor("leaves", LEAVES_KEYWORDS)
+end
+
+local function RestoreAllHidden()
+    local list = {}
+    for obj in pairs(HiddenObjects) do table.insert(list, obj) end
+    for _, obj in ipairs(list) do ShowObject(obj) end
 end
 
 -- ==================== TARGET ACQUISITION ====================
@@ -446,7 +673,7 @@ end
 local function NameMatchesVehicle(name)
     local lower = string.lower(name)
     for _, kw in ipairs(VEHICLE_KEYWORDS) do
-        if string.find(lower, kw, 1, true) then return true end
+        if lower:find(kw, 1, true) then return true end
     end
     return false
 end
@@ -737,8 +964,8 @@ local function EvaluateVisibility(character)
     if InvisCounter[name] >= FLAG_CONSECUTIVE_FRAMES and not Flagged[name] then
         Flagged[name] = true
         Rayfield:Notify({
-            Title = "⚠ NGHI MODERATOR / GHOST",
-            Content = name .. " — tàng hình " .. FLAG_CONSECUTIVE_FRAMES .. " frame liên tục",
+            Title = "⚠ MODERATOR DETECTED",
+            Content = name .. " — model tàng hình",
             Duration = 10,
         })
         local data = ESPObjects[character]
@@ -758,11 +985,11 @@ local function CheckModerator(player)
     end
     local lower = string.lower(player.Name)
     for _, kw in ipairs(MOD_KEYWORDS) do
-        if string.find(lower, kw) then return true end
+        if lower:find(kw) then return true end
     end
     local dn = string.lower(player.DisplayName or "")
     for _, kw in ipairs(MOD_KEYWORDS) do
-        if string.find(dn, kw) then return true end
+        if dn:find(kw) then return true end
     end
     return false
 end
@@ -921,7 +1148,7 @@ local function SetPreviewTarget(character)
             if d:IsA("BasePart") then
                 local ok, p = pcall(function() return d:Clone() end)
                 if ok and p then
-                    p.Anchored = true
+                    p.Anchored = false
                     p.CanCollide = false
                     p.CanQuery = false
                     p.CanTouch = false
@@ -936,12 +1163,25 @@ local function SetPreviewTarget(character)
         if root then
             clone.PrimaryPart = clone:FindFirstChild(root.Name) or clone:FindFirstChildWhichIsA("BasePart")
         end
+    else
+        for _, d in ipairs(clone:GetDescendants()) do
+            if d:IsA("BasePart") then
+                pcall(function() d.Anchored = false end)
+            end
+        end
     end
 
     clone.Parent = PreviewWorld
 
-    local hum = clone:FindFirstChildOfClass("Humanoid")
-    if hum then hum:Destroy() end
+    -- Giữ Humanoid + Animator cho animation
+    local cloneHum = clone:FindFirstChildOfClass("Humanoid")
+    if cloneHum then
+        if not cloneHum:FindFirstChildOfClass("Animator") then
+            local anim = Instance.new("Animator")
+            anim.Parent = cloneHum
+        end
+        cloneHum.PlatformStand = true
+    end
 
     local ok, center = pcall(function() return clone:GetPivot().Position end)
     if not ok or not center then center = Vector3.new(0, 0, 0) end
@@ -958,6 +1198,91 @@ local function SetPreviewTarget(character)
         PreviewFrame.Title.Text = name
         PreviewFrame.UIStroke.Color = Color3.fromRGB(0, 255, 0)
         PreviewFrame.Title.TextColor3 = Color3.fromRGB(0, 255, 0)
+    end
+end
+
+-- ==================== PREVIEW ANIMATION SYNC ====================
+local function SyncPreviewAnimation()
+    if not PreviewTarget or not PreviewTarget.Parent then return end
+    if not PreviewWorld then return end
+
+    local clone = nil
+    for _, c in ipairs(PreviewWorld:GetChildren()) do
+        if c:IsA("Model") then clone = c; break end
+    end
+    if not clone then return end
+
+    -- Đồng bộ Motor6D transform
+    for _, origMotor in ipairs(PreviewTarget:GetDescendants()) do
+        if origMotor:IsA("Motor6D") then
+            local parentName = origMotor.Parent and origMotor.Parent.Name
+            if parentName then
+                local cloneParent = clone:FindFirstChild(parentName, true)
+                if cloneParent then
+                    local cloneMotor = cloneParent:FindFirstChild(origMotor.Name)
+                    if cloneMotor and cloneMotor:IsA("Motor6D") then
+                        pcall(function()
+                            cloneMotor.C0 = origMotor.C0
+                            cloneMotor.C1 = origMotor.C1
+                            cloneMotor.Transform = origMotor.Transform
+                        end)
+                    end
+                end
+            end
+        end
+    end
+
+    -- Đồng bộ animation tracks
+    local origHum = PreviewTarget:FindFirstChildOfClass("Humanoid")
+    local cloneHum = clone:FindFirstChildOfClass("Humanoid")
+    if origHum and cloneHum then
+        local origAnimator = origHum:FindFirstChildOfClass("Animator")
+        local cloneAnimator = cloneHum:FindFirstChildOfClass("Animator")
+        if origAnimator and cloneAnimator then
+            local origTracks = origAnimator:GetPlayingAnimationTracks()
+            local cloneTracks = cloneAnimator:GetPlayingAnimationTracks()
+
+            local needReload = (#origTracks ~= #cloneTracks)
+            if not needReload then
+                for i, t in ipairs(origTracks) do
+                    if not cloneTracks[i] or cloneTracks[i].Animation.AnimationId ~= t.Animation.AnimationId then
+                        needReload = true
+                        break
+                    end
+                end
+            end
+
+            if needReload then
+                for _, t in ipairs(cloneTracks) do
+                    pcall(function() t:Stop() end)
+                end
+                for _, t in ipairs(origTracks) do
+                    local ok, newTrack = pcall(function()
+                        return cloneAnimator:LoadAnimation(t.Animation)
+                    end)
+                    if ok and newTrack then
+                        pcall(function()
+                            newTrack.Priority = t.Priority
+                            newTrack:Play(t.TimePosition)
+                            newTrack:AdjustSpeed(t.Speed)
+                        end)
+                    end
+                end
+            else
+                for i, t in ipairs(origTracks) do
+                    local ct = cloneTracks[i]
+                    if ct then
+                        pcall(function()
+                            local delta = math.abs(ct.TimePosition - t.TimePosition)
+                            if delta > 0.05 then
+                                ct.TimePosition = t.TimePosition
+                            end
+                            ct:AdjustSpeed(t.Speed)
+                        end)
+                    end
+                end
+            end
+        end
     end
 end
 
@@ -1007,6 +1332,7 @@ end)
 RunService.RenderStepped:Connect(function()
     UpdateESP()
     UpdateVehicleESP()
+    SyncPreviewAnimation()
 
     -- Tàng hình / mod check
     if InvisibleAlertEnabled then
@@ -1019,7 +1345,7 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- Preview border theo đánh giá mới nhất
+    -- Preview border
     if PreviewFrame and PreviewTarget and PreviewTarget.Parent then
         local plr = Players:GetPlayerFromCharacter(PreviewTarget)
         local name = plr and plr.Name or (PreviewTarget.Name .. " (NPC)")
@@ -1129,18 +1455,18 @@ CombatTab:CreateToggle({Name = "Target NPC (tắt khi PvP)", CurrentValue = fals
 
 -- Prediction
 local PredTab = Window:CreateTab("Prediction", 4483362458)
-PredTab:CreateSection("Bullet Drop")
+PredTab:CreateSection("Bullet Drop (Wiki-based)")
 PredTab:CreateToggle({Name = "Bật Bullet Drop", CurrentValue = true, Flag = "PredToggle",
     Callback = function(v) PredictionEnabled = v end})
-PredTab:CreateSlider({Name = "Tốc độ đạn (m/s)", Range = {100, 2000}, Increment = 1, Suffix = "m/s",
-    CurrentValue = 404, Flag = "BulletSpeed", Callback = function(v) BulletSpeed = v end})
-PredTab:CreateButton({Name = "Quét tốc độ đạn từ súng",
+PredTab:CreateSlider({Name = "Tốc độ đạn thủ công (m/s)", Range = {100, 2000}, Increment = 1, Suffix = "m/s",
+    CurrentValue = 715, Flag = "BulletSpeed", Callback = function(v) BulletSpeed = v end})
+PredTab:CreateButton({Name = "Quét tốc độ đạn từ súng (Wiki)",
     Callback = function()
         local ok = UpdateBulletSpeed()
         if ok then
-            Rayfield:Notify({Title = "ETX", Content = "Đã quét: " .. CurrentBulletSpeed .. " m/s", Duration = 3})
+            Rayfield:Notify({Title = "ETX", Content = "Wiki scan: " .. CurrentBulletSpeed .. " m/s", Duration = 3})
         else
-            Rayfield:Notify({Title = "ETX", Content = "Không tìm thấy, nhập tay.", Duration = 3})
+            Rayfield:Notify({Title = "ETX", Content = "Không match wiki, nhập tay.", Duration = 3})
         end
     end})
 PredTab:CreateSlider({Name = "Trọng lực (studs/s²)", Range = {50, 500}, Increment = 10, Suffix = "studs/s²",
@@ -1217,7 +1543,7 @@ ESPTab:CreateColorPicker({Name = "Màu China Hat", Color = Color3.fromRGB(220, 3
     Callback = function(c) ChinaHatColor = c end})
 
 ESPTab:CreateSection("Vehicle / Aircraft")
-ESPTab:CreateToggle({Name = "Bật ESP Vehicle (MI-24V, Heli, v.v.)", CurrentValue = true, Flag = "VehicleESPToggle",
+ESPTab:CreateToggle({Name = "Bật ESP Vehicle (MI-24V, Heli)", CurrentValue = true, Flag = "VehicleESPToggle",
     Callback = function(v)
         VehicleESPEnabled = v
         if not v then
@@ -1240,6 +1566,54 @@ ESPTab:CreateColorPicker({Name = "Màu Vehicle ESP", Color = Color3.fromRGB(0, 2
             if d.DistLabel then d.DistLabel.TextColor3 = c end
             if d.Highlight then d.Highlight.FillColor = c end
         end
+    end})
+
+-- Visuals / Map
+local VisualTab = Window:CreateTab("Visuals", 4483362458)
+VisualTab:CreateSection("Lighting")
+VisualTab:CreateToggle({Name = "FullBright toàn map", CurrentValue = false, Flag = "FullBright",
+    Callback = function(v)
+        FullBrightEnabled = v
+        if v then ApplyFullBright() else RestoreLighting() end
+    end})
+VisualTab:CreateButton({Name = "Reset Lighting",
+    Callback = function()
+        FullBrightEnabled = false
+        RestoreLighting()
+    end})
+
+VisualTab:CreateSection("Map Cleanup")
+VisualTab:CreateToggle({Name = "Xóa cỏ (Grass)", CurrentValue = false, Flag = "GrassRemove",
+    Callback = function(v)
+        GrassRemoverEnabled = v
+        if v then RemoveAllGrass()
+        else
+            -- Gỡ cỏ đã ẩn
+            local list = {}
+            for obj, data in pairs(HiddenObjects) do
+                if data.tag == "grass" then table.insert(list, obj) end
+            end
+            for _, obj in ipairs(list) do ShowObject(obj) end
+        end
+    end})
+VisualTab:CreateToggle({Name = "Xóa lá cây (Leaves/Trees)", CurrentValue = false, Flag = "LeavesRemove",
+    Callback = function(v)
+        LeavesRemoverEnabled = v
+        if v then RemoveAllLeaves()
+        else
+            local list = {}
+            for obj, data in pairs(HiddenObjects) do
+                if data.tag == "leaves" then table.insert(list, obj) end
+            end
+            for _, obj in ipairs(list) do ShowObject(obj) end
+        end
+    end})
+VisualTab:CreateButton({Name = "Khôi phục toàn bộ map",
+    Callback = function()
+        RestoreAllHidden()
+        GrassRemoverEnabled = false
+        LeavesRemoverEnabled = false
+        Rayfield:Notify({Title = "ETX", Content = "Đã khôi phục map.", Duration = 3})
     end})
 
 -- Preview
@@ -1275,8 +1649,8 @@ SecTab:CreateToggle({Name = "Cảnh báo mục tiêu tàng hình", CurrentValue 
             end
         end
     end})
-SecTab:CreateSlider({Name = "Ngưỡng frame tàng hình", Range = {5, 60}, Increment = 1, Suffix = "f",
-    CurrentValue = 15, Flag = "InvisFrames",
+SecTab:CreateSlider({Name = "Ngưỡng frame tàng hình", Range = {1, 60}, Increment = 1, Suffix = "f",
+    CurrentValue = 1, Flag = "InvisFrames",
     Callback = function(v) FLAG_CONSECUTIVE_FRAMES = v end})
 SecTab:CreateButton({Name = "Quét Moderator server",
     Callback = function()
@@ -1318,16 +1692,14 @@ end)
 -- ==================== GUN WATCH ====================
 local function HookChar(char)
     task.wait(1)
-    UpdateBulletSpeed()
+    if UpdateBulletSpeed() then
+        Rayfield:Notify({Title = "ETX | Wiki scan", Content = CurrentBulletSpeed .. " m/s", Duration = 2})
+    end
     char.ChildAdded:Connect(function(c)
         if c:IsA("Tool") then
             task.wait(0.3)
             if UpdateBulletSpeed() then
-                Rayfield:Notify({
-                    Title = "ETX | Auto-scan",
-                    Content = CurrentBulletSpeed .. " m/s",
-                    Duration = 2,
-                })
+                Rayfield:Notify({Title = "ETX | Wiki scan", Content = CurrentBulletSpeed .. " m/s", Duration = 2})
             end
         end
     end)
@@ -1343,9 +1715,9 @@ CreatePreviewFrame()
 task.spawn(function() task.wait(3); ScanForModerators(true) end)
 
 Rayfield:Notify({
-    Title = "ETX v1.2 loaded",
-    Content = "Vehicle ESP + range 30km. RightShift mở UI.",
+    Title = "ETX v1.3 loaded",
+    Content = "Wiki bullet drop + Preview animation + FullBright + Map cleanup.",
     Duration = 6,
 })
 
-print("[ETX v1.2] Project Delta loaded.")
+print("[ETX v1.3] Project Delta loaded.")
