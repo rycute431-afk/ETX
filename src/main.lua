@@ -252,7 +252,6 @@ local function CreateWindow(opts)
     end
     return win
 end
-
 -- ==================== STATE ====================
 local AimbotMaster=false; local AimbotActive=false; local AimbotKeybind="Y"; local AimbotMode="Toggle"
 local FOV=150; local TargetPart="Head"; local PredictionEnabled=true
@@ -314,7 +313,7 @@ local function GetTargetPart(c, name)
     elseif name=="HumanoidRootPart" then return c:FindFirstChild("HumanoidRootPart") end
     return c:FindFirstChild("Head")
 end
-local function IsNPC(m) return Players:GetPlayerFromCharacter(m)==nil end
+function IsNPC(m) return Players:GetPlayerFromCharacter(m)==nil end
 local function InputMatches(input)
     if input.UserInputType==Enum.UserInputType.Keyboard then return input.KeyCode.Name:upper()==AimbotKeybind
     elseif input.UserInputType==Enum.UserInputType.MouseButton1 then return AimbotKeybind=="MOUSEBUTTON1"
@@ -639,7 +638,7 @@ end
 -- GRASS/LEAVES
 local GRASS_KW={"grass","foliage","bush","shrub","plant"}
 local LEAVES_KW={"leaf","leaves","tree","branch","pine","oak","canopy"}
-local function NameMatch(name, kws)
+function NameMatch(name, kws)
     local l = string.lower(name)
     for _, k in ipairs(kws) do if l:find(k,1,true) then return true end end
     return false
@@ -774,7 +773,7 @@ local function UpdateESP()
 end
 
 -- VEHICLE ESP
-local function NameMatchVeh(n)
+function NameMatchVeh(n)
     local l = string.lower(n)
     for _, k in ipairs(VEHICLE_KEYWORDS) do if l:find(k,1,true) then return true end end
     return false
@@ -832,7 +831,7 @@ local function UpdateVehicleESP()
 end
 
 -- CONTAINER ESP
-local function NameMatchContainer(n)
+function NameMatchContainer(n)
     local l = string.lower(n)
     for _, k in ipairs(CONTAINER_KEYWORDS) do if l:find(k,1,true) then return true end end
     return false
@@ -906,7 +905,7 @@ end
 -- SKELETON
 local SKEL15 = {{"Head","UpperTorso"},{"UpperTorso","LowerTorso"},{"UpperTorso","LeftUpperArm"},{"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},{"UpperTorso","RightUpperArm"},{"RightUpperArm","RightLowerArm"},{"RightLowerArm","RightHand"},{"LowerTorso","LeftUpperLeg"},{"LeftUpperLeg","LeftLowerLeg"},{"LeftLowerLeg","LeftFoot"},{"LowerTorso","RightUpperLeg"},{"RightUpperLeg","RightLowerLeg"},{"RightLowerLeg","RightFoot"}}
 local SKEL6 = {{"Head","Torso"},{"Torso","Left Arm"},{"Torso","Right Arm"},{"Torso","Left Leg"},{"Torso","Right Leg"}}
-local function GetBones(c)
+function GetBones(c)
     local h = c:FindFirstChildOfClass("Humanoid")
     if h and h.RigType==Enum.HumanoidRigType.R15 then return SKEL15 end
     return SKEL6
@@ -975,13 +974,13 @@ end
 function ClearAllHats() for c in pairs(ChinaHatObjects) do RemoveChinaHat(c) end end
 
 -- INVIS / MOD
-local function PartIsVisible(p)
+function PartIsVisible(p)
     if p.Transparency < INVIS_THRESHOLD then return true end
     local l = p.LocalTransparencyModifier
     if l and l < INVIS_THRESHOLD then return true end
     return false
 end
-local function IsFullyInvisible(c)
+function IsFullyInvisible(c)
     if not c then return false end
     local hasAny = false
     for _, d in ipairs(c:GetDescendants()) do
@@ -1153,10 +1152,10 @@ local function SyncPreviewAnimation()
         end
     end
 end
-
 -- ==================== BUILD UI ====================
 local Window = CreateWindow({Title="ETX v2.3", Subtitle="Project Delta"})
 
+do
 local CombatTab = Window:Tab({Title="Combat", Short="CMBT"})
 local AIM = CombatTab:Section({Title="Aimbot"})
 AIM:Toggle({Title="Bật Aimbot (Master)", Value=AimbotMaster, Callback=function(v) AimbotMaster=v; if not v then AimbotActive=false; ClearTargetLock(true) end; SaveConfig() end})
@@ -1334,6 +1333,7 @@ CLEAN:Button({Title="Xóa tất cả visuals", ButtonText="Clear", Callback=func
     Notify("ETX", "Đã xóa visuals.", 3)
 end})
 CLEAN:Button({Title="Ẩn UI (RightShift mở lại)", ButtonText="Ẩn", Callback=function() Window.Gui.Enabled = false end})
+end
 
 -- ==================== RENDER LOOP ====================
 RunService:BindToRenderStep("ETX_Aimbot", Enum.RenderPriority.Camera.Value+1, function()
