@@ -1,5 +1,5 @@
 -- language: Lua, file: ETX_v1_3.lua, target: Roblox Project Delta
--- ETX v1.3 — Aimbot + Wiki Bullet Drop + ESP (fixed scale) + HP Bar + Skeleton + China Hat + Vehicle ESP + Preview + Mod Check + FullBright + Map Cleanup
+-- ETX v1.3 — Aimbot (lead prediction) + Wiki Bullet Drop + ESP (fixed scale) + HP Bar + Skeleton + China Hat + Vehicle ESP + Preview + Mod Check + FullBright + Map Cleanup
 
 -- ==================== SERVICES ====================
 local Players = game:GetService("Players")
@@ -23,7 +23,6 @@ local Window = Rayfield:CreateWindow({
 })
 
 -- ==================== STATE ====================
--- Aimbot
 local AimbotMaster = false
 local AimbotActive = false
 local AimbotKeybind = "Y"
@@ -31,6 +30,9 @@ local AimbotMode = "Toggle"
 local FOV = 150
 local TargetPart = "Head"
 local PredictionEnabled = true
+local PredictionLead = true
+local PredictionLeadMultiplier = 1.0
+local PredictionLeadVertical = false
 local BulletSpeed = 715
 local BulletGravity = 196.2
 local Smoothness = 0.15
@@ -39,42 +41,35 @@ local CurrentBulletSpeed = nil
 local CapturingKey = false
 local CaptureConn = nil
 
--- NPC targeting
 local TargetNPCEnabled = false
 
--- ESP
 local ESPEnabled = false
 local ESPTransparency = 0.5
 local ESPColor = Color3.fromRGB(0, 255, 0)
 local ESPObjects = {}
 
--- ESP Fixed Threshold Scale
 local ESPDynamicScale = true
 local ESPMaxScale = 1.0
 local ESPMinScale = 0.75
 local ESPNearDistance = 100
 local ESPFarDistance = 400
 
--- HP Bar
 local HPBarEnabled = true
 local HPBarWidth = 120
 local HPColorHigh = Color3.fromRGB(0, 255, 0)
 local HPColorMid  = Color3.fromRGB(255, 200, 0)
 local HPColorLow  = Color3.fromRGB(255, 40, 40)
 
--- Skeleton
 local SkeletonEnabled = true
 local SkeletonColor = Color3.fromRGB(255, 255, 255)
 local SkeletonThickness = 1
 local SkeletonObjects = {}
 
--- China Hat
 local ChinaHatEnabled = true
 local ChinaHatColor = Color3.fromRGB(220, 30, 30)
 local ChinaHatScale = 1
 local ChinaHatObjects = {}
 
--- Vehicle / Aircraft ESP
 local VehicleESPEnabled = true
 local VehicleESPColor = Color3.fromRGB(0, 200, 255)
 local VehicleESPTransparency = 0.5
@@ -87,7 +82,6 @@ local VEHICLE_KEYWORDS = {
     "military", "vehicle", "aircraft", "jet", "plane",
 }
 
--- Preview
 local PreviewEnabled = true
 local PreviewFrame = nil
 local PreviewWorld = nil
@@ -96,7 +90,6 @@ local PreviewTarget = nil
 local PreviewPos = UDim2.new(0, 20, 1, -220)
 local PreviewSize = UDim2.new(0, 200, 0, 200)
 
--- Invisible / Mod
 local ModeratorAlertEnabled = true
 local InvisibleAlertEnabled = true
 local INVIS_THRESHOLD = 0.98
@@ -106,16 +99,13 @@ local Flagged = {}
 local MOD_GROUP_IDS = {}
 local MOD_KEYWORDS = {"moderator", "admin", "owner", "staff"}
 
--- FullBright
 local FullBrightEnabled = false
 local OriginalLighting = {}
 
--- Grass / Leaves Remover
 local GrassRemoverEnabled = false
 local LeavesRemoverEnabled = false
 local HiddenObjects = {}
 
--- Targetline
 local TargetLineEnabled = true
 local TargetLine = Drawing and Drawing.new("Line") or nil
 if TargetLine then
@@ -125,7 +115,6 @@ if TargetLine then
     TargetLine.Transparency = 0.8
 end
 
--- FOV Circle
 local FOVCircle = Drawing and Drawing.new("Circle") or nil
 if FOVCircle then
     FOVCircle.Visible = false
@@ -347,13 +336,35 @@ local function UpdateBulletSpeed()
     return false
 end
 
-local function CalculateBulletDrop(targetPos, speed, gravity)
+-- ==================== BALLISTIC PREDICTION (LEAD + DROP) ====================
+local function PredictTargetPosition(targetPart, speed)
+    if not targetPart then return nil end
+    local aimPos = targetPart.Position
+    if not PredictionEnabled then return aimPos end
+
     local myPos = Camera.CFrame.Position
-    local dist = (targetPos - myPos).Magnitude
-    if dist < 1 then return targetPos end
-    local t = dist / speed
-    local drop = 0.5 * gravity * t * t
-    return targetPos + Vector3.new(0, drop, 0)
+    local dist = (aimPos - myPos).Magnitude
+    if dist < 1 then return aimPos end
+
+    local timeToTarget = dist / speed
+
+    if PredictionLead then
+        local character = targetPart:FindFirstAncestorOfClass("Model")
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if root then
+            local vel = root.AssemblyLinearVelocity
+            local horizVel = Vector3.new(vel.X, 0, vel.Z)
+            if PredictionLeadVertical then
+                horizVel = vel
+            end
+            aimPos = aimPos + horizVel * timeToTarget * PredictionLeadMultiplier
+        end
+    end
+
+    local drop = 0.5 * BulletGravity * timeToTarget * timeToTarget
+    aimPos = aimPos + Vector3.new(0, drop, 0)
+
+    return aimPos
 end
 
 -- ==================== FULLBRIGHT ====================
@@ -517,13 +528,11 @@ local function AimAt(target)
     if not target then return end
     local part = GetTargetPart(target, TargetPart)
     if not part then return end
-    local targetPos = part.Position
-    if PredictionEnabled then
-        local spd = CurrentBulletSpeed or BulletSpeed
-        targetPos = CalculateBulletDrop(targetPos, spd, BulletGravity)
-    end
+    local spd = CurrentBulletSpeed or BulletSpeed
+    local aimPos = PredictTargetPosition(part, spd)
+    if not aimPos then return end
     local cur = Camera.CFrame
-    local new = CFrame.new(cur.Position, targetPos)
+    local new = CFrame.new(cur.Position, aimPos)
     Camera.CFrame = cur:Lerp(new, Smoothness)
 end
 
@@ -1324,7 +1333,9 @@ RunService:BindToRenderStep("ETX_Aimbot", Enum.RenderPriority.Camera.Value + 1, 
             if lineTarget then
                 local part = GetTargetPart(lineTarget, TargetPart)
                 if part then
-                    local sp, on = Camera:WorldToViewportPoint(part.Position)
+                    local spd = CurrentBulletSpeed or BulletSpeed
+                    local aimPos = PredictTargetPosition(part, spd) or part.Position
+                    local sp, on = Camera:WorldToViewportPoint(aimPos)
                     if on then
                         local vp = Camera.ViewportSize
                         TargetLine.From = Vector2.new(vp.X / 2, vp.Y / 2)
@@ -1465,7 +1476,17 @@ CombatTab:CreateToggle({Name = "Hiện Targetline", CurrentValue = true, Flag = 
 CombatTab:CreateToggle({Name = "Target NPC (tắt khi PvP)", CurrentValue = false, Flag = "TargetNPC",
     Callback = function(v) TargetNPCEnabled = v end})
 
--- Prediction
+-- Lead Prediction — ĐẶT NGAY CẠNH AIMBOT
+CombatTab:CreateSection("Dự đoán hướng đi")
+CombatTab:CreateToggle({Name = "Bật dự đoán hướng đi (Lead)", CurrentValue = true, Flag = "LeadToggle",
+    Callback = function(v) PredictionLead = v end})
+CombatTab:CreateSlider({Name = "Hệ số lead", Range = {0.5, 2.0}, Increment = 0.05, Suffix = "x",
+    CurrentValue = 1.0, Flag = "LeadMult",
+    Callback = function(v) PredictionLeadMultiplier = v end})
+CombatTab:CreateToggle({Name = "Lead cả trục Y (địch nhảy/rơi)", CurrentValue = false, Flag = "LeadVert",
+    Callback = function(v) PredictionLeadVertical = v end})
+
+-- Prediction (bullet drop + wiki scan)
 local PredTab = Window:CreateTab("Prediction", 4483362458)
 PredTab:CreateSection("Bullet Drop (Wiki-based)")
 PredTab:CreateToggle({Name = "Bật Bullet Drop", CurrentValue = true, Flag = "PredToggle",
@@ -1744,7 +1765,7 @@ task.spawn(function() task.wait(3); ScanForModerators(true) end)
 
 Rayfield:Notify({
     Title = "ETX v1.3 loaded",
-    Content = "Fixed scale ESP + Wiki bullet drop + Preview animation.",
+    Content = "Lead prediction trong tab Combat. RightShift mở UI.",
     Duration = 6,
 })
 
