@@ -1,5 +1,5 @@
 -- language: Lua, file: ETX_v1_3.lua, target: Roblox Project Delta
--- ETX v1.3 — Aimbot + Wiki Bullet Drop + ESP (dynamic scale) + HP Bar + Skeleton + China Hat + Vehicle ESP + Preview + Mod Check + FullBright + Map Cleanup
+-- ETX v1.3 — Aimbot + Wiki Bullet Drop + ESP (fixed scale) + HP Bar + Skeleton + China Hat + Vehicle ESP + Preview + Mod Check + FullBright + Map Cleanup
 
 -- ==================== SERVICES ====================
 local Players = game:GetService("Players")
@@ -48,11 +48,12 @@ local ESPTransparency = 0.5
 local ESPColor = Color3.fromRGB(0, 255, 0)
 local ESPObjects = {}
 
--- ESP Dynamic Scale
+-- ESP Fixed Threshold Scale
 local ESPDynamicScale = true
-local ESPNearDistance = 50
-local ESPFarDistance = 800
-local ESPMinScale = 0.35
+local ESPMaxScale = 1.0
+local ESPMinScale = 0.75
+local ESPNearDistance = 100
+local ESPFarDistance = 400
 
 -- HP Bar
 local HPBarEnabled = true
@@ -198,35 +199,36 @@ local function InputMatches(input)
     return false
 end
 
+-- ==================== FIXED THRESHOLD SCALE ====================
 local function GetDistanceScale(distance)
     if not ESPDynamicScale then return 1 end
-    if distance <= ESPNearDistance then return 1 end
+    if distance <= ESPNearDistance then return ESPMaxScale end
     if distance >= ESPFarDistance then return ESPMinScale end
     local t = (distance - ESPNearDistance) / (ESPFarDistance - ESPNearDistance)
-    return 1 - t * (1 - ESPMinScale)
+    return ESPMaxScale - t * (ESPMaxScale - ESPMinScale)
 end
 
 local function ApplyESPScale(data, scale)
     if not data or not data.Billboard then return end
     data.Billboard.Size = UDim2.new(0, data.BaseBB.X * scale, 0, data.BaseBB.Y * scale)
-    data.NameLabel.TextSize = math.max(7, data.BaseNameSize * scale)
-    data.DistLabel.TextSize = math.max(6, data.BaseDistSize * scale)
-    data.HPText.TextSize = math.max(6, data.BaseHPSize * scale)
-    data.HPBg.Size = UDim2.new(0, data.BaseHPWidth * scale, 0, math.max(3, data.BaseHPHeight * scale))
+    data.NameLabel.TextSize = math.max(11, data.BaseNameSize * scale)
+    data.DistLabel.TextSize = math.max(10, data.BaseDistSize * scale)
+    data.HPText.TextSize = math.max(10, data.BaseHPSize * scale)
+    data.HPBg.Size = UDim2.new(0, data.BaseHPWidth * scale, 0, math.max(4, data.BaseHPHeight * scale))
     data.HPBg.Position = UDim2.new(0.5, -data.BaseHPWidth * scale / 2, 0, 0)
     data.NameLabel.Position = UDim2.new(0, 0, 0, 7 * scale)
     data.DistLabel.Position = UDim2.new(0, 0, 0, 24 * scale)
     data.HPText.Position = UDim2.new(0, 0, 0, 39 * scale)
-    data.Billboard.StudsOffset = Vector3.new(0, 3.2 * math.max(0.5, scale), 0)
+    data.Billboard.StudsOffset = Vector3.new(0, 3.2 * math.max(0.8, scale), 0)
 end
 
 local function ApplyVehicleScale(data, scale)
     if not data or not data.Billboard then return end
     data.Billboard.Size = UDim2.new(0, data.BaseBB.X * scale, 0, data.BaseBB.Y * scale)
-    data.NameLabel.TextSize = math.max(7, data.BaseNameSize * scale)
-    data.DistLabel.TextSize = math.max(6, data.BaseDistSize * scale)
+    data.NameLabel.TextSize = math.max(11, data.BaseNameSize * scale)
+    data.DistLabel.TextSize = math.max(10, data.BaseDistSize * scale)
     data.DistLabel.Position = UDim2.new(0, 0, 0, 18 * scale)
-    data.Billboard.StudsOffset = Vector3.new(0, 6 * math.max(0.5, scale), 0)
+    data.Billboard.StudsOffset = Vector3.new(0, 6 * math.max(0.8, scale), 0)
 end
 
 -- ==================== WIKI GUN VELOCITY ====================
@@ -1507,18 +1509,21 @@ ESPTab:CreateColorPicker({Name = "Màu ESP", Color = Color3.fromRGB(0, 255, 0), 
         end
     end})
 
-ESPTab:CreateSection("Dynamic Scale")
-ESPTab:CreateToggle({Name = "Chữ nhỏ dần theo khoảng cách", CurrentValue = true, Flag = "ESPDynScale",
+ESPTab:CreateSection("Fixed Scale")
+ESPTab:CreateToggle({Name = "Bật scale theo khoảng cách", CurrentValue = true, Flag = "ESPDynScale",
     Callback = function(v) ESPDynamicScale = v end})
-ESPTab:CreateSlider({Name = "Ngưỡng gần (scale 100%)", Range = {10, 200}, Increment = 10, Suffix = "m",
-    CurrentValue = 50, Flag = "ESPNear",
-    Callback = function(v) ESPNearDistance = v end})
-ESPTab:CreateSlider({Name = "Ngưỡng xa (scale min)", Range = {200, 3000}, Increment = 50, Suffix = "m",
-    CurrentValue = 800, Flag = "ESPFar",
-    Callback = function(v) ESPFarDistance = v end})
-ESPTab:CreateSlider({Name = "Scale tối thiểu", Range = {0.15, 1}, Increment = 0.05, Suffix = "x",
-    CurrentValue = 0.35, Flag = "ESPMinScale",
+ESPTab:CreateSlider({Name = "Scale tối đa", Range = {0.8, 1.5}, Increment = 0.05, Suffix = "x",
+    CurrentValue = 1.0, Flag = "ESPMaxScale",
+    Callback = function(v) ESPMaxScale = v end})
+ESPTab:CreateSlider({Name = "Scale tối thiểu", Range = {0.5, 1.0}, Increment = 0.05, Suffix = "x",
+    CurrentValue = 0.75, Flag = "ESPMinScale",
     Callback = function(v) ESPMinScale = v end})
+ESPTab:CreateSlider({Name = "Bắt đầu thu nhỏ từ (m)", Range = {50, 300}, Increment = 10, Suffix = "m",
+    CurrentValue = 100, Flag = "ESPNear",
+    Callback = function(v) ESPNearDistance = v end})
+ESPTab:CreateSlider({Name = "Nhỏ nhất từ (m)", Range = {200, 2000}, Increment = 50, Suffix = "m",
+    CurrentValue = 400, Flag = "ESPFar",
+    Callback = function(v) ESPFarDistance = v end})
 
 ESPTab:CreateSection("Health Bar")
 ESPTab:CreateToggle({Name = "Hiện Health Bar %", CurrentValue = true, Flag = "HPBarToggle",
@@ -1739,7 +1744,7 @@ task.spawn(function() task.wait(3); ScanForModerators(true) end)
 
 Rayfield:Notify({
     Title = "ETX v1.3 loaded",
-    Content = "Dynamic ESP scale + Wiki bullet drop + Preview animation.",
+    Content = "Fixed scale ESP + Wiki bullet drop + Preview animation.",
     Duration = 6,
 })
 
