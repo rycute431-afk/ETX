@@ -1,5 +1,5 @@
 -- language: Lua, file: ETX_v1_3.lua, target: Roblox Project Delta
--- ETX v1.3 — Aimbot + Wiki Bullet Drop + ESP + HP Bar + Skeleton + China Hat + Vehicle ESP + Preview (animation) + Mod Check + FullBright + Grass/Leaves Remover
+-- ETX v1.3 — Aimbot + Wiki Bullet Drop + ESP (dynamic scale) + HP Bar + Skeleton + China Hat + Vehicle ESP + Preview + Mod Check + FullBright + Map Cleanup
 
 -- ==================== SERVICES ====================
 local Players = game:GetService("Players")
@@ -47,6 +47,12 @@ local ESPEnabled = false
 local ESPTransparency = 0.5
 local ESPColor = Color3.fromRGB(0, 255, 0)
 local ESPObjects = {}
+
+-- ESP Dynamic Scale
+local ESPDynamicScale = true
+local ESPNearDistance = 50
+local ESPFarDistance = 800
+local ESPMinScale = 0.35
 
 -- HP Bar
 local HPBarEnabled = true
@@ -106,7 +112,7 @@ local OriginalLighting = {}
 -- Grass / Leaves Remover
 local GrassRemoverEnabled = false
 local LeavesRemoverEnabled = false
-local HiddenObjects = {}   -- [object] = original properties
+local HiddenObjects = {}
 
 -- Targetline
 local TargetLineEnabled = true
@@ -131,61 +137,34 @@ if FOVCircle then
 end
 
 -- ==================== WIKI AMMO DATA ====================
--- Bảng muzzle velocity (m/s) tổng hợp từ Wiki Project Delta
 local AMMO_VELOCITY = {
-    -- Pistol / SMG
-    ["9x18"] = 359,
-    ["9x18 AP"] = 383,
-    ["9x18 TFZ"] = 404,
-    ["9x19"] = 465,
-    ["9x19 AP"] = 500,
-    [".45"] = 465,
-    [".45 AP"] = 515,
-    ["7.62x25"] = 460,
-    ["7.62x25 AP"] = 484,
-
-    -- Rifle
-    ["7.62x39"] = 715,
-    ["7.62x39 AP"] = 767,
-    ["5.56x45"] = 940,
-    ["5.56x45 AP"] = 990,
-    ["5.45x39"] = 890,
-    ["5.45x39 AP"] = 940,
-    ["7.62x51"] = 850,
-    ["7.62x51 AP"] = 900,
-    ["7.62x54R"] = 885,
-    ["7.62x54R AP"] = 935,
-
-    -- Shotgun
-    ["12ga Slug"] = 405,
-    ["12ga Flechette"] = 340,
-    ["12ga AP-20"] = 625,
-
-    -- Special
-    ["9x39"] = 450,
-    ["9x39 AP"] = 490,
-    [".300 BLK"] = 550,
-    [".300 BLK AP"] = 600,
+    ["9x18"] = 359, ["9x18 AP"] = 383, ["9x18 TFZ"] = 404,
+    ["9x19"] = 465, ["9x19 AP"] = 500,
+    [".45"] = 465, [".45 AP"] = 515,
+    ["7.62x25"] = 460, ["7.62x25 AP"] = 484,
+    ["7.62x39"] = 715, ["7.62x39 AP"] = 767,
+    ["5.56x45"] = 940, ["5.56x45 AP"] = 990,
+    ["5.45x39"] = 890, ["5.45x39 AP"] = 940,
+    ["7.62x51"] = 850, ["7.62x51 AP"] = 900,
+    ["7.62x54R"] = 885, ["7.62x54R AP"] = 935,
+    ["12ga Slug"] = 405, ["12ga Flechette"] = 340, ["12ga AP-20"] = 625,
+    ["9x39"] = 450, ["9x39 AP"] = 490,
+    [".300 BLK"] = 550, [".300 BLK AP"] = 600,
     ["85mm PG-7V"] = 200,
 }
 
--- Ánh xạ tên súng → caliber (dựa trên wiki Project Delta)
 local GUN_CALIBER_MAP = {
-    -- Pistol
     ["makarov"] = "9x18", ["pm"] = "9x18",
     ["mp443"] = "9x19", ["glock"] = "9x19",
     ["m1911"] = ".45", ["colt"] = ".45",
     ["tt"] = "7.62x25", ["tokarev"] = "7.62x25",
-    -- Rifle
     ["akmn"] = "7.62x39", ["akm"] = "7.62x39",
     ["ak74"] = "5.45x39", ["aks74"] = "5.45x39",
     ["m4a1"] = "5.56x45", ["m16"] = "5.56x45",
     ["adar"] = "5.56x45", ["falm"] = "7.62x51",
     ["fn fal"] = "7.62x51", ["svd"] = "7.62x54R",
     ["pkm"] = "7.62x54R", ["mosin"] = "7.62x54R",
-    -- Shotgun
     ["saiga"] = "12ga", ["izh"] = "12ga",
-    -- Special
     ["as val"] = "9x39", ["vss"] = "9x39",
     ["m700"] = "7.62x51", ["sr-25"] = "7.62x51",
 }
@@ -219,7 +198,38 @@ local function InputMatches(input)
     return false
 end
 
--- ==================== WIKI-BASED GUN VELOCITY SCAN ====================
+local function GetDistanceScale(distance)
+    if not ESPDynamicScale then return 1 end
+    if distance <= ESPNearDistance then return 1 end
+    if distance >= ESPFarDistance then return ESPMinScale end
+    local t = (distance - ESPNearDistance) / (ESPFarDistance - ESPNearDistance)
+    return 1 - t * (1 - ESPMinScale)
+end
+
+local function ApplyESPScale(data, scale)
+    if not data or not data.Billboard then return end
+    data.Billboard.Size = UDim2.new(0, data.BaseBB.X * scale, 0, data.BaseBB.Y * scale)
+    data.NameLabel.TextSize = math.max(7, data.BaseNameSize * scale)
+    data.DistLabel.TextSize = math.max(6, data.BaseDistSize * scale)
+    data.HPText.TextSize = math.max(6, data.BaseHPSize * scale)
+    data.HPBg.Size = UDim2.new(0, data.BaseHPWidth * scale, 0, math.max(3, data.BaseHPHeight * scale))
+    data.HPBg.Position = UDim2.new(0.5, -data.BaseHPWidth * scale / 2, 0, 0)
+    data.NameLabel.Position = UDim2.new(0, 0, 0, 7 * scale)
+    data.DistLabel.Position = UDim2.new(0, 0, 0, 24 * scale)
+    data.HPText.Position = UDim2.new(0, 0, 0, 39 * scale)
+    data.Billboard.StudsOffset = Vector3.new(0, 3.2 * math.max(0.5, scale), 0)
+end
+
+local function ApplyVehicleScale(data, scale)
+    if not data or not data.Billboard then return end
+    data.Billboard.Size = UDim2.new(0, data.BaseBB.X * scale, 0, data.BaseBB.Y * scale)
+    data.NameLabel.TextSize = math.max(7, data.BaseNameSize * scale)
+    data.DistLabel.TextSize = math.max(6, data.BaseDistSize * scale)
+    data.DistLabel.Position = UDim2.new(0, 0, 0, 18 * scale)
+    data.Billboard.StudsOffset = Vector3.new(0, 6 * math.max(0.5, scale), 0)
+end
+
+-- ==================== WIKI GUN VELOCITY ====================
 local function GetAmmoKey(caliber, ammoType)
     local cal = string.lower(caliber or ""):gsub("%s", "")
     local typ = string.lower(ammoType or "")
@@ -277,7 +287,6 @@ local function ScanGunVelocity()
 
     local caliber, ammoType = nil, nil
 
-    -- Attributes
     for _, attr in ipairs(tool:GetAttributes()) do
         local lower = string.lower(attr)
         if lower:find("caliber") or lower:find("ammotype") or lower:find("ammo") then
@@ -289,7 +298,6 @@ local function ScanGunVelocity()
         end
     end
 
-    -- Descendants (ValueBase + GUI Text)
     for _, d in ipairs(tool:GetDescendants()) do
         if d:IsA("ValueBase") then
             local lower = string.lower(d.Name)
@@ -308,7 +316,6 @@ local function ScanGunVelocity()
         end
     end
 
-    -- Fallback: gun name → caliber
     if not caliber then
         local toolName = string.lower(tool.Name)
         for pattern, cal in pairs(GUN_CALIBER_MAP) do
@@ -451,13 +458,8 @@ local function ScanWorldFor(tag, keywords)
     end
 end
 
-local function RemoveAllGrass()
-    ScanWorldFor("grass", GRASS_KEYWORDS)
-end
-
-local function RemoveAllLeaves()
-    ScanWorldFor("leaves", LEAVES_KEYWORDS)
-end
+local function RemoveAllGrass() ScanWorldFor("grass", GRASS_KEYWORDS) end
+local function RemoveAllLeaves() ScanWorldFor("leaves", LEAVES_KEYWORDS) end
 
 local function RestoreAllHidden()
     local list = {}
@@ -603,7 +605,13 @@ local function CreateESP(character)
     ESPObjects[character] = {
         Billboard = bb, NameLabel = nl, DistLabel = dl,
         HPBg = hpBg, HPFill = hpFill, HPText = hpText,
-        Highlight = hl, Character = character
+        Highlight = hl, Character = character,
+        BaseBB = Vector2.new(160, 62),
+        BaseNameSize = 15,
+        BaseDistSize = 13,
+        BaseHPSize = 12,
+        BaseHPWidth = HPBarWidth,
+        BaseHPHeight = 5,
     }
 end
 
@@ -649,6 +657,9 @@ local function UpdateESP()
                 data.DistLabel.Text = "[" .. math.floor(d) .. "m]"
                 local plr = Players:GetPlayerFromCharacter(char)
                 data.NameLabel.Text = plr and plr.Name or (char.Name .. " (NPC)")
+
+                local scale = GetDistanceScale(d)
+                ApplyESPScale(data, scale)
 
                 if hum and data.HPFill then
                     local pct = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
@@ -735,7 +746,10 @@ local function CreateVehicleESP(model)
     VehicleObjects[model] = {
         Billboard = bb, NameLabel = nameLabel,
         DistLabel = distLabel, Highlight = hl,
-        Model = model, Anchor = anchor
+        Model = model, Anchor = anchor,
+        BaseBB = Vector2.new(180, 40),
+        BaseNameSize = 15,
+        BaseDistSize = 13,
     }
 end
 
@@ -778,6 +792,9 @@ local function UpdateVehicleESP()
                 data.DistLabel.TextColor3 = VehicleESPColor
                 data.Highlight.FillColor = VehicleESPColor
                 data.Highlight.FillTransparency = VehicleESPTransparency
+
+                local vScale = GetDistanceScale(d)
+                ApplyVehicleScale(data, vScale)
             end
         end
     end
@@ -1173,7 +1190,6 @@ local function SetPreviewTarget(character)
 
     clone.Parent = PreviewWorld
 
-    -- Giữ Humanoid + Animator cho animation
     local cloneHum = clone:FindFirstChildOfClass("Humanoid")
     if cloneHum then
         if not cloneHum:FindFirstChildOfClass("Animator") then
@@ -1212,7 +1228,6 @@ local function SyncPreviewAnimation()
     end
     if not clone then return end
 
-    -- Đồng bộ Motor6D transform
     for _, origMotor in ipairs(PreviewTarget:GetDescendants()) do
         if origMotor:IsA("Motor6D") then
             local parentName = origMotor.Parent and origMotor.Parent.Name
@@ -1232,7 +1247,6 @@ local function SyncPreviewAnimation()
         end
     end
 
-    -- Đồng bộ animation tracks
     local origHum = PreviewTarget:FindFirstChildOfClass("Humanoid")
     local cloneHum = clone:FindFirstChildOfClass("Humanoid")
     if origHum and cloneHum then
@@ -1334,7 +1348,6 @@ RunService.RenderStepped:Connect(function()
     UpdateVehicleESP()
     SyncPreviewAnimation()
 
-    -- Tàng hình / mod check
     if InvisibleAlertEnabled then
         for char in pairs(ESPObjects) do
             if char.Parent then EvaluateVisibility(char) end
@@ -1345,7 +1358,6 @@ RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- Preview border
     if PreviewFrame and PreviewTarget and PreviewTarget.Parent then
         local plr = Players:GetPlayerFromCharacter(PreviewTarget)
         local name = plr and plr.Name or (PreviewTarget.Name .. " (NPC)")
@@ -1354,7 +1366,6 @@ RunService.RenderStepped:Connect(function()
         PreviewFrame.Title.TextColor3 = isFlagged and Color3.fromRGB(255, 50, 50) or Color3.fromRGB(0, 255, 0)
     end
 
-    -- Skeleton
     if SkeletonEnabled and ESPEnabled then
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= LocalPlayer and plr.Character then
@@ -1377,7 +1388,6 @@ RunService.RenderStepped:Connect(function()
         ClearAllSkeletons()
     end
 
-    -- China Hat
     if ChinaHatEnabled and ESPEnabled then
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= LocalPlayer and plr.Character then
@@ -1497,6 +1507,19 @@ ESPTab:CreateColorPicker({Name = "Màu ESP", Color = Color3.fromRGB(0, 255, 0), 
         end
     end})
 
+ESPTab:CreateSection("Dynamic Scale")
+ESPTab:CreateToggle({Name = "Chữ nhỏ dần theo khoảng cách", CurrentValue = true, Flag = "ESPDynScale",
+    Callback = function(v) ESPDynamicScale = v end})
+ESPTab:CreateSlider({Name = "Ngưỡng gần (scale 100%)", Range = {10, 200}, Increment = 10, Suffix = "m",
+    CurrentValue = 50, Flag = "ESPNear",
+    Callback = function(v) ESPNearDistance = v end})
+ESPTab:CreateSlider({Name = "Ngưỡng xa (scale min)", Range = {200, 3000}, Increment = 50, Suffix = "m",
+    CurrentValue = 800, Flag = "ESPFar",
+    Callback = function(v) ESPFarDistance = v end})
+ESPTab:CreateSlider({Name = "Scale tối thiểu", Range = {0.15, 1}, Increment = 0.05, Suffix = "x",
+    CurrentValue = 0.35, Flag = "ESPMinScale",
+    Callback = function(v) ESPMinScale = v end})
+
 ESPTab:CreateSection("Health Bar")
 ESPTab:CreateToggle({Name = "Hiện Health Bar %", CurrentValue = true, Flag = "HPBarToggle",
     Callback = function(v)
@@ -1512,6 +1535,7 @@ ESPTab:CreateSlider({Name = "Chiều rộng Health Bar", Range = {60, 240}, Incr
         HPBarWidth = v
         for _, d in pairs(ESPObjects) do
             if d.HPBg then
+                d.BaseHPWidth = v
                 d.HPBg.Size = UDim2.new(0, v, 0, 5)
                 d.HPBg.Position = UDim2.new(0.5, -v/2, 0, 0)
             end
@@ -1568,7 +1592,7 @@ ESPTab:CreateColorPicker({Name = "Màu Vehicle ESP", Color = Color3.fromRGB(0, 2
         end
     end})
 
--- Visuals / Map
+-- Visuals
 local VisualTab = Window:CreateTab("Visuals", 4483362458)
 VisualTab:CreateSection("Lighting")
 VisualTab:CreateToggle({Name = "FullBright toàn map", CurrentValue = false, Flag = "FullBright",
@@ -1588,7 +1612,6 @@ VisualTab:CreateToggle({Name = "Xóa cỏ (Grass)", CurrentValue = false, Flag =
         GrassRemoverEnabled = v
         if v then RemoveAllGrass()
         else
-            -- Gỡ cỏ đã ẩn
             local list = {}
             for obj, data in pairs(HiddenObjects) do
                 if data.tag == "grass" then table.insert(list, obj) end
@@ -1716,7 +1739,7 @@ task.spawn(function() task.wait(3); ScanForModerators(true) end)
 
 Rayfield:Notify({
     Title = "ETX v1.3 loaded",
-    Content = "Wiki bullet drop + Preview animation + FullBright + Map cleanup.",
+    Content = "Dynamic ESP scale + Wiki bullet drop + Preview animation.",
     Duration = 6,
 })
 
