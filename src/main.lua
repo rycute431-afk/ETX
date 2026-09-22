@@ -1,5 +1,5 @@
 -- language: Lua, file: ETX_v1_3.lua, target: Roblox Project Delta
--- ETX v1.3 — Aimbot (lead + sticky lock) + Wiki Bullet Drop + ESP (fixed scale) + HP Bar + Skeleton + China Hat + Vehicle ESP + Preview + Mod Check + FullBright + Map Cleanup
+-- ETX v1.3 — Phosphorus UI version
 
 -- ==================== SERVICES ====================
 local Players = game:GetService("Players")
@@ -11,16 +11,22 @@ local CoreGui = game:GetService("CoreGui")
 local Camera = Workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 
--- ==================== UI ====================
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+-- ==================== UI (Phosphorus) ====================
+local Phosphorus = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Phosphorus/main/source.lua"))()
 
-local Window = Rayfield:CreateWindow({
-    Name = "Project Delta | ETX v1.3",
-    LoadingTitle = "Đang tải ETX...",
-    LoadingSubtitle = "by ANON",
-    ConfigurationSaving = { Enabled = true, FolderName = "ANON_PD", FileName = "ETX_config" },
-    KeySystem = false,
+local Window = Phosphorus:Window({
+    Title = "ETX v1.3 | Project Delta",
+    Subtitle = "by ANON",
+    Size = UDim2.fromOffset(620, 460),
+    Keybind = Enum.KeyCode.RightShift,
+    Resizable = true,
 })
+
+local function Notify(content, duration)
+    pcall(function()
+        Phosphorus:Notification({ Title = "ETX", Content = content, Duration = duration or 4 })
+    end)
+end
 
 -- ==================== STATE ====================
 local AimbotMaster = false
@@ -41,9 +47,12 @@ local CurrentBulletSpeed = nil
 local CapturingKey = false
 local CaptureConn = nil
 
--- Target Lock (sticky aim)
+local AutoSaveEnabled = true
+local AutoSaveTimerEnabled = false
+
 local TargetLockEnabled = true
 local LockedTarget = nil
+local ExcludedTarget = nil
 local LockReleaseFOVMult = 1.8
 local LockLostFrames = 0
 local LockLostGraceFrames = 30
@@ -198,7 +207,128 @@ local function InputMatches(input)
     return false
 end
 
--- ==================== FIXED THRESHOLD SCALE ====================
+-- ==================== CONFIG SYSTEM ====================
+local CONFIG_FOLDER = "ETX_Config"
+local CONFIG_FILE = CONFIG_FOLDER .. "/etx_config.json"
+
+local function EnsureFolder()
+    if not isfolder(CONFIG_FOLDER) then
+        pcall(function() makefolder(CONFIG_FOLDER) end)
+    end
+end
+
+local function EncodeValue(v)
+    if type(v) == "boolean" then return tostring(v)
+    elseif type(v) == "number" then return tostring(v)
+    elseif type(v) == "string" then return '"' .. v:gsub('"', '\\"') .. '"'
+    else return '"' .. tostring(v) .. '"' end
+end
+
+local function DecodeValue(str)
+    str = str:match("^%s*(.-)%s*$")
+    if str == "true" then return true
+    elseif str == "false" then return false
+    elseif tonumber(str) then return tonumber(str)
+    elseif str:sub(1,1) == '"' and str:sub(-1) == '"' then
+        return str:sub(2, -2):gsub('\\"', '"')
+    end
+    return str
+end
+
+local function ColorToString(c)
+    return string.format("%.3f,%.3f,%.3f", c.R, c.G, c.B)
+end
+
+local function StringToColor(s)
+    local r, g, b = string.match(s, "([%d%.]+),([%d%.]+),([%d%.]+)")
+    if r and g and b then return Color3.new(tonumber(r), tonumber(g), tonumber(b)) end
+    return Color3.fromRGB(0, 255, 0)
+end
+
+local ConfigSchema = {
+    AimbotMaster = { get = function() return AimbotMaster end, set = function(v) AimbotMaster = v end },
+    AimbotMode = { get = function() return AimbotMode end, set = function(v) AimbotMode = v end },
+    AimbotKeybind = { get = function() return AimbotKeybind end, set = function(v) AimbotKeybind = v end },
+    FOV = { get = function() return FOV end, set = function(v) FOV = v end },
+    TargetPart = { get = function() return TargetPart end, set = function(v) TargetPart = v end },
+    Smoothness = { get = function() return Smoothness end, set = function(v) Smoothness = v end },
+    TargetLineEnabled = { get = function() return TargetLineEnabled end, set = function(v) TargetLineEnabled = v end },
+    TargetNPCEnabled = { get = function() return TargetNPCEnabled end, set = function(v) TargetNPCEnabled = v end },
+    MaxDistance = { get = function() return MaxDistance end, set = function(v) MaxDistance = v end },
+    PredictionLead = { get = function() return PredictionLead end, set = function(v) PredictionLead = v end },
+    PredictionLeadMultiplier = { get = function() return PredictionLeadMultiplier end, set = function(v) PredictionLeadMultiplier = v end },
+    PredictionLeadVertical = { get = function() return PredictionLeadVertical end, set = function(v) PredictionLeadVertical = v end },
+    TargetLockEnabled = { get = function() return TargetLockEnabled end, set = function(v) TargetLockEnabled = v end },
+    LockReleaseFOVMult = { get = function() return LockReleaseFOVMult end, set = function(v) LockReleaseFOVMult = v end },
+    LockLostGraceFrames = { get = function() return LockLostGraceFrames end, set = function(v) LockLostGraceFrames = v end },
+    LockSwitchFrames = { get = function() return LockSwitchFrames end, set = function(v) LockSwitchFrames = v end },
+    PredictionEnabled = { get = function() return PredictionEnabled end, set = function(v) PredictionEnabled = v end },
+    BulletSpeed = { get = function() return BulletSpeed end, set = function(v) BulletSpeed = v end },
+    BulletGravity = { get = function() return BulletGravity end, set = function(v) BulletGravity = v end },
+    ESPEnabled = { get = function() return ESPEnabled end, set = function(v) ESPEnabled = v end },
+    ESPTransparency = { get = function() return ESPTransparency end, set = function(v) ESPTransparency = v end },
+    ESPColor = { get = function() return ColorToString(ESPColor) end, set = function(v) ESPColor = StringToColor(v) end },
+    ESPDynamicScale = { get = function() return ESPDynamicScale end, set = function(v) ESPDynamicScale = v end },
+    ESPMaxScale = { get = function() return ESPMaxScale end, set = function(v) ESPMaxScale = v end },
+    ESPMinScale = { get = function() return ESPMinScale end, set = function(v) ESPMinScale = v end },
+    ESPNearDistance = { get = function() return ESPNearDistance end, set = function(v) ESPNearDistance = v end },
+    ESPFarDistance = { get = function() return ESPFarDistance end, set = function(v) ESPFarDistance = v end },
+    HPBarEnabled = { get = function() return HPBarEnabled end, set = function(v) HPBarEnabled = v end },
+    HPBarWidth = { get = function() return HPBarWidth end, set = function(v) HPBarWidth = v end },
+    SkeletonEnabled = { get = function() return SkeletonEnabled end, set = function(v) SkeletonEnabled = v end },
+    SkeletonThickness = { get = function() return SkeletonThickness end, set = function(v) SkeletonThickness = v end },
+    SkeletonColor = { get = function() return ColorToString(SkeletonColor) end, set = function(v) SkeletonColor = StringToColor(v) end },
+    ChinaHatEnabled = { get = function() return ChinaHatEnabled end, set = function(v) ChinaHatEnabled = v end },
+    ChinaHatScale = { get = function() return ChinaHatScale end, set = function(v) ChinaHatScale = v end },
+    ChinaHatColor = { get = function() return ColorToString(ChinaHatColor) end, set = function(v) ChinaHatColor = StringToColor(v) end },
+    VehicleESPEnabled = { get = function() return VehicleESPEnabled end, set = function(v) VehicleESPEnabled = v end },
+    VehicleESPTransparency = { get = function() return VehicleESPTransparency end, set = function(v) VehicleESPTransparency = v end },
+    VehicleESPColor = { get = function() return ColorToString(VehicleESPColor) end, set = function(v) VehicleESPColor = StringToColor(v) end },
+    PreviewEnabled = { get = function() return PreviewEnabled end, set = function(v) PreviewEnabled = v end },
+    ModeratorAlertEnabled = { get = function() return ModeratorAlertEnabled end, set = function(v) ModeratorAlertEnabled = v end },
+    InvisibleAlertEnabled = { get = function() return InvisibleAlertEnabled end, set = function(v) InvisibleAlertEnabled = v end },
+    FLAG_CONSECUTIVE_FRAMES = { get = function() return FLAG_CONSECUTIVE_FRAMES end, set = function(v) FLAG_CONSECUTIVE_FRAMES = v end },
+    FullBrightEnabled = { get = function() return FullBrightEnabled end, set = function(v) FullBrightEnabled = v end },
+    GrassRemoverEnabled = { get = function() return GrassRemoverEnabled end, set = function(v) GrassRemoverEnabled = v end },
+    LeavesRemoverEnabled = { get = function() return LeavesRemoverEnabled end, set = function(v) LeavesRemoverEnabled = v end },
+    AutoSaveEnabled = { get = function() return AutoSaveEnabled end, set = function(v) AutoSaveEnabled = v end },
+    AutoSaveTimerEnabled = { get = function() return AutoSaveTimerEnabled end, set = function(v) AutoSaveTimerEnabled = v end },
+}
+
+local function SaveConfig()
+    EnsureFolder()
+    local lines = {"{"}
+    for key, entry in pairs(ConfigSchema) do
+        table.insert(lines, string.format('  "%s": %s,', key, EncodeValue(entry.get())))
+    end
+    table.insert(lines, "}")
+    pcall(function() writefile(CONFIG_FILE, table.concat(lines, "\n")) end)
+end
+
+local function LoadConfig()
+    EnsureFolder()
+    if not isfile(CONFIG_FILE) then return false, 0 end
+    local ok, content = pcall(function() return readfile(CONFIG_FILE) end)
+    if not ok or not content then return false, 0 end
+    local loaded = 0
+    for key, valStr in content:gmatch('"([^"]+)":%s*([^,\n}]+)') do
+        if ConfigSchema[key] then
+            pcall(function() ConfigSchema[key].set(DecodeValue(valStr)) end)
+            loaded = loaded + 1
+        end
+    end
+    return true, loaded
+end
+
+local function ResetConfig()
+    pcall(function()
+        if isfile(CONFIG_FILE) then delfile(CONFIG_FILE) end
+    end)
+end
+
+local configLoaded, configCount = LoadConfig()
+
+-- ==================== SCALE ====================
 local function GetDistanceScale(distance)
     if not ESPDynamicScale then return 1 end
     if distance <= ESPNearDistance then return ESPMaxScale end
@@ -234,49 +364,36 @@ end
 local function GetAmmoKey(caliber, ammoType)
     local cal = string.lower(caliber or ""):gsub("%s", "")
     local typ = string.lower(ammoType or "")
-
     if cal:find("9x18") then
         if typ:find("tfz") then return "9x18 TFZ"
         elseif typ:find("ap") or typ:find("armor") then return "9x18 AP"
         else return "9x18" end
     elseif cal:find("9x19") then
-        if typ:find("ap") or typ:find("armor") then return "9x19 AP"
-        else return "9x19" end
+        if typ:find("ap") or typ:find("armor") then return "9x19 AP" else return "9x19" end
     elseif cal:find("45") then
-        if typ:find("ap") or typ:find("armor") then return ".45 AP"
-        else return ".45" end
+        if typ:find("ap") or typ:find("armor") then return ".45 AP" else return ".45" end
     elseif cal:find("7.62x25") then
-        if typ:find("ap") or typ:find("armor") then return "7.62x25 AP"
-        else return "7.62x25" end
+        if typ:find("ap") or typ:find("armor") then return "7.62x25 AP" else return "7.62x25" end
     elseif cal:find("7.62x39") then
-        if typ:find("ap") or typ:find("armor") then return "7.62x39 AP"
-        else return "7.62x39" end
+        if typ:find("ap") or typ:find("armor") then return "7.62x39 AP" else return "7.62x39" end
     elseif cal:find("5.56x45") then
-        if typ:find("ap") or typ:find("armor") then return "5.56x45 AP"
-        else return "5.56x45" end
+        if typ:find("ap") or typ:find("armor") then return "5.56x45 AP" else return "5.56x45" end
     elseif cal:find("5.45x39") then
-        if typ:find("ap") or typ:find("armor") then return "5.45x39 AP"
-        else return "5.45x39" end
+        if typ:find("ap") or typ:find("armor") then return "5.45x39 AP" else return "5.45x39" end
     elseif cal:find("7.62x51") then
-        if typ:find("ap") or typ:find("armor") then return "7.62x51 AP"
-        else return "7.62x51" end
+        if typ:find("ap") or typ:find("armor") then return "7.62x51 AP" else return "7.62x51" end
     elseif cal:find("7.62x54") then
-        if typ:find("ap") or typ:find("armor") then return "7.62x54R AP"
-        else return "7.62x54R" end
+        if typ:find("ap") or typ:find("armor") then return "7.62x54R AP" else return "7.62x54R" end
     elseif cal:find("12ga") or cal:find("12gauge") then
         if typ:find("slug") then return "12ga Slug"
         elseif typ:find("flechette") then return "12ga Flechette"
         elseif typ:find("ap") or typ:find("armor") then return "12ga AP-20"
         else return "12ga Slug" end
     elseif cal:find("9x39") then
-        if typ:find("ap") or typ:find("armor") then return "9x39 AP"
-        else return "9x39" end
+        if typ:find("ap") or typ:find("armor") then return "9x39 AP" else return "9x39" end
     elseif cal:find("300") or cal:find("blk") then
-        if typ:find("ap") or typ:find("armor") then return ".300 BLK AP"
-        else return ".300 BLK" end
-    elseif cal:find("85") then
-        return "85mm PG-7V"
-    end
+        if typ:find("ap") or typ:find("armor") then return ".300 BLK AP" else return ".300 BLK" end
+    elseif cal:find("85") then return "85mm PG-7V" end
     return nil
 end
 
@@ -287,18 +404,15 @@ local function ScanGunVelocity()
     if not tool then return nil end
 
     local caliber, ammoType = nil, nil
-
     for _, attr in ipairs(tool:GetAttributes()) do
         local lower = string.lower(attr)
         if lower:find("caliber") or lower:find("ammotype") or lower:find("ammo") then
             local val = tool:GetAttribute(attr)
             if type(val) == "string" then
-                if lower:find("caliber") then caliber = val
-                else ammoType = val end
+                if lower:find("caliber") then caliber = val else ammoType = val end
             end
         end
     end
-
     for _, d in ipairs(tool:GetDescendants()) do
         if d:IsA("ValueBase") then
             local lower = string.lower(d.Name)
@@ -316,97 +430,71 @@ local function ScanGunVelocity()
             end
         end
     end
-
     if not caliber then
         local toolName = string.lower(tool.Name)
         for pattern, cal in pairs(GUN_CALIBER_MAP) do
-            if toolName:find(pattern) then
-                caliber = cal
-                break
-            end
+            if toolName:find(pattern) then caliber = cal; break end
         end
     end
-
     if not caliber then return nil end
-
     local key = GetAmmoKey(caliber, ammoType)
-    if key and AMMO_VELOCITY[key] then
-        return AMMO_VELOCITY[key]
-    end
+    if key and AMMO_VELOCITY[key] then return AMMO_VELOCITY[key] end
     return nil
 end
 
 local function UpdateBulletSpeed()
     local s = ScanGunVelocity()
-    if s then
-        CurrentBulletSpeed = s
-        BulletSpeed = s
-        return true
-    end
+    if s then CurrentBulletSpeed = s; BulletSpeed = s; return true end
     return false
 end
 
--- ==================== BALLISTIC PREDICTION ====================
+-- ==================== BALLISTIC ====================
 local function PredictTargetPosition(targetPart, speed)
     if not targetPart then return nil end
     local aimPos = targetPart.Position
     if not PredictionEnabled then return aimPos end
-
     local myPos = Camera.CFrame.Position
     local dist = (aimPos - myPos).Magnitude
     if dist < 1 then return aimPos end
-
     local timeToTarget = dist / speed
-
     if PredictionLead then
         local character = targetPart:FindFirstAncestorOfClass("Model")
         local root = character and character:FindFirstChild("HumanoidRootPart")
         if root then
             local vel = root.AssemblyLinearVelocity
             local horizVel = Vector3.new(vel.X, 0, vel.Z)
-            if PredictionLeadVertical then
-                horizVel = vel
-            end
+            if PredictionLeadVertical then horizVel = vel end
             aimPos = aimPos + horizVel * timeToTarget * PredictionLeadMultiplier
         end
     end
-
     local drop = 0.5 * BulletGravity * timeToTarget * timeToTarget
-    aimPos = aimPos + Vector3.new(0, drop, 0)
-
-    return aimPos
+    return aimPos + Vector3.new(0, drop, 0)
 end
 
--- ==================== TARGET LOCK (STICKY AIM) ====================
+-- ==================== TARGET LOCK ====================
 local function IsTargetValid(char, fovMult)
     if not char or not char.Parent then return false end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum or hum.Health <= 0 then return false end
     local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return false end
-
-    local myPos = Camera.CFrame.Position
-    local d = (root.Position - myPos).Magnitude
+    local d = (root.Position - Camera.CFrame.Position).Magnitude
     if d > MaxDistance then return false end
-
     local sp, on = Camera:WorldToViewportPoint(root.Position)
     if not on then return false end
     local mousePos = UserInputService:GetMouseLocation()
     local dm = (Vector2.new(sp.X, sp.Y) - mousePos).Magnitude
-    local fovLimit = FOV * (fovMult or 1)
-    if dm > fovLimit then return false end
-
-    return true
+    return dm <= FOV * (fovMult or 1)
 end
 
-local function FindClosestInFOV(fovLimit)
+local function FindClosestInFOV(fovLimit, excludeTarget)
     local closest, shortest = nil, math.huge
     local mousePos = UserInputService:GetMouseLocation()
 
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr == LocalPlayer then continue end
         local char = plr.Character
-        if not char then continue end
+        if not char or char == excludeTarget then continue end
         local hum = char:FindFirstChildOfClass("Humanoid")
         if not hum or hum.Health <= 0 then continue end
         local root = char:FindFirstChild("HumanoidRootPart")
@@ -416,15 +504,12 @@ local function FindClosestInFOV(fovLimit)
         local sp, on = Camera:WorldToViewportPoint(root.Position)
         if not on then continue end
         local dm = (Vector2.new(sp.X, sp.Y) - mousePos).Magnitude
-        if dm < fovLimit and dm < shortest then
-            shortest = dm
-            closest = char
-        end
+        if dm < fovLimit and dm < shortest then shortest = dm; closest = char end
     end
 
     if TargetNPCEnabled then
         for _, npc in ipairs(Workspace:GetChildren()) do
-            if npc:IsA("Model") and npc:FindFirstChildOfClass("Humanoid") and npc:FindFirstChild("Head") then
+            if npc:IsA("Model") and npc ~= excludeTarget and npc:FindFirstChildOfClass("Humanoid") and npc:FindFirstChild("Head") then
                 if IsNPC(npc) then
                     local hum = npc:FindFirstChildOfClass("Humanoid")
                     if hum and hum.Health > 0 then
@@ -435,10 +520,7 @@ local function FindClosestInFOV(fovLimit)
                             local sp, on = Camera:WorldToViewportPoint(root.Position)
                             if not on then continue end
                             local dm = (Vector2.new(sp.X, sp.Y) - mousePos).Magnitude
-                            if dm < fovLimit and dm < shortest then
-                                shortest = dm
-                                closest = npc
-                            end
+                            if dm < fovLimit and dm < shortest then shortest = dm; closest = npc end
                         end
                     end
                 end
@@ -449,15 +531,14 @@ local function FindClosestInFOV(fovLimit)
 end
 
 local function GetClosestTarget()
-    if not TargetLockEnabled then
-        return FindClosestInFOV(FOV)
-    end
+    if ExcludedTarget and not ExcludedTarget.Parent then ExcludedTarget = nil end
+
+    if not TargetLockEnabled then return FindClosestInFOV(FOV, ExcludedTarget) end
 
     if LockedTarget then
         if IsTargetValid(LockedTarget, LockReleaseFOVMult) then
             LockLostFrames = 0
-
-            local candidate = FindClosestInFOV(FOV)
+            local candidate = FindClosestInFOV(FOV, ExcludedTarget)
             if candidate and candidate ~= LockedTarget then
                 if PendingSwitchTarget == candidate then
                     PendingSwitchCount = PendingSwitchCount + 1
@@ -474,7 +555,6 @@ local function GetClosestTarget()
                 PendingSwitchTarget = nil
                 PendingSwitchCount = 0
             end
-
             return LockedTarget
         else
             LockLostFrames = LockLostFrames + 1
@@ -489,32 +569,30 @@ local function GetClosestTarget()
         end
     end
 
-    local found = FindClosestInFOV(FOV)
-    if found then
-        LockedTarget = found
-        LockLostFrames = 0
-    end
+    local found = FindClosestInFOV(FOV, ExcludedTarget)
+    if found then LockedTarget = found; LockLostFrames = 0 end
     return found
 end
 
-local function ClearTargetLock()
+local function ClearTargetLock(exclude)
+    if exclude and LockedTarget then ExcludedTarget = LockedTarget end
     LockedTarget = nil
     LockLostFrames = 0
     PendingSwitchTarget = nil
     PendingSwitchCount = 0
 end
 
+local function ClearExclusion()
+    ExcludedTarget = nil
+end
+
 -- ==================== FULLBRIGHT ====================
 local function SaveOriginalLighting()
     OriginalLighting = {
-        Ambient = Lighting.Ambient,
-        OutdoorAmbient = Lighting.OutdoorAmbient,
-        Brightness = Lighting.Brightness,
-        ClockTime = Lighting.ClockTime,
-        GlobalShadows = Lighting.GlobalShadows,
-        FogEnd = Lighting.FogEnd,
-        FogStart = Lighting.FogStart,
-        FogColor = Lighting.FogColor,
+        Ambient = Lighting.Ambient, OutdoorAmbient = Lighting.OutdoorAmbient,
+        Brightness = Lighting.Brightness, ClockTime = Lighting.ClockTime,
+        GlobalShadows = Lighting.GlobalShadows, FogEnd = Lighting.FogEnd,
+        FogStart = Lighting.FogStart, FogColor = Lighting.FogColor,
         ExposureCompensation = Lighting.ExposureCompensation,
         EnvironmentDiffuseScale = Lighting.EnvironmentDiffuseScale,
         EnvironmentSpecularScale = Lighting.EnvironmentSpecularScale,
@@ -543,7 +621,7 @@ local function RestoreLighting()
     end
 end
 
--- ==================== GRASS / LEAVES REMOVER ====================
+-- ==================== GRASS/LEAVES ====================
 local GRASS_KEYWORDS = {"grass", "foliage", "bush", "shrub", "plant"}
 local LEAVES_KEYWORDS = {"leaf", "leaves", "tree", "branch", "pine", "oak", "canopy"}
 
@@ -600,10 +678,8 @@ end
 
 local function ScanWorldFor(tag, keywords)
     for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") or obj:IsA("Model") then
-            if NameMatches(obj.Name, keywords) then
-                HideObject(obj, tag)
-            end
+        if (obj:IsA("BasePart") or obj:IsA("Model")) and NameMatches(obj.Name, keywords) then
+            HideObject(obj, tag)
         end
     end
 end
@@ -617,7 +693,7 @@ local function RestoreAllHidden()
     for _, obj in ipairs(list) do ShowObject(obj) end
 end
 
--- ==================== AIMBOT ACTION ====================
+-- ==================== AIMBOT ====================
 local function AimAt(target)
     if not target then return end
     local part = GetTargetPart(target, TargetPart)
@@ -644,7 +720,6 @@ local function CreateESP(character)
     bb.Parent = head
 
     local hpBg = Instance.new("Frame")
-    hpBg.Name = "HPBg"
     hpBg.Size = UDim2.new(0, HPBarWidth, 0, 5)
     hpBg.Position = UDim2.new(0.5, -HPBarWidth/2, 0, 0)
     hpBg.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
@@ -654,7 +729,6 @@ local function CreateESP(character)
     hpBg.Parent = bb
 
     local hpFill = Instance.new("Frame")
-    hpFill.Name = "HPFill"
     hpFill.Size = UDim2.new(1, 0, 1, 0)
     hpFill.BackgroundColor3 = HPColorHigh
     hpFill.BorderSizePixel = 0
@@ -685,7 +759,6 @@ local function CreateESP(character)
     dl.Parent = bb
 
     local hpText = Instance.new("TextLabel")
-    hpText.Name = "HPText"
     hpText.Size = UDim2.new(1, 0, 0, 13)
     hpText.Position = UDim2.new(0, 0, 0, 39)
     hpText.BackgroundTransparency = 1
@@ -699,7 +772,6 @@ local function CreateESP(character)
     hpText.Parent = bb
 
     local hl = Instance.new("Highlight")
-    hl.Name = "ETX_Highlight"
     hl.FillColor = ESPColor
     hl.FillTransparency = ESPTransparency
     hl.OutlineColor = Color3.fromRGB(255, 255, 255)
@@ -712,11 +784,8 @@ local function CreateESP(character)
         HPBg = hpBg, HPFill = hpFill, HPText = hpText,
         Highlight = hl, Character = character,
         BaseBB = Vector2.new(160, 62),
-        BaseNameSize = 15,
-        BaseDistSize = 13,
-        BaseHPSize = 12,
-        BaseHPWidth = HPBarWidth,
-        BaseHPHeight = 5,
+        BaseNameSize = 15, BaseDistSize = 13, BaseHPSize = 12,
+        BaseHPWidth = HPBarWidth, BaseHPHeight = 5,
     }
 end
 
@@ -736,7 +805,6 @@ local function UpdateESP()
         ClearAllHats()
         return
     end
-
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer and plr.Character then CreateESP(plr.Character) end
     end
@@ -745,12 +813,10 @@ local function UpdateESP()
             if IsNPC(npc) then CreateESP(npc) end
         end
     end
-
     for char, data in pairs(ESPObjects) do
         if not char or not char.Parent then RemoveESP(char); continue end
         local hum = char:FindFirstChildOfClass("Humanoid")
         local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
-
         if root and data.Billboard then
             local d = (root.Position - Camera.CFrame.Position).Magnitude
             if d > MaxDistance then
@@ -762,21 +828,14 @@ local function UpdateESP()
                 data.DistLabel.Text = "[" .. math.floor(d) .. "m]"
                 local plr = Players:GetPlayerFromCharacter(char)
                 data.NameLabel.Text = plr and plr.Name or (char.Name .. " (NPC)")
-
-                local scale = GetDistanceScale(d)
-                ApplyESPScale(data, scale)
-
+                ApplyESPScale(data, GetDistanceScale(d))
                 if hum and data.HPFill then
                     local pct = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
                     data.HPFill.Size = UDim2.new(pct, 0, 1, 0)
                     data.HPText.Text = math.floor(pct * 100) .. "%"
-                    if pct > 0.6 then
-                        data.HPFill.BackgroundColor3 = HPColorHigh
-                    elseif pct > 0.3 then
-                        data.HPFill.BackgroundColor3 = HPColorMid
-                    else
-                        data.HPFill.BackgroundColor3 = HPColorLow
-                    end
+                    if pct > 0.6 then data.HPFill.BackgroundColor3 = HPColorHigh
+                    elseif pct > 0.3 then data.HPFill.BackgroundColor3 = HPColorMid
+                    else data.HPFill.BackgroundColor3 = HPColorLow end
                     data.HPBg.Visible = HPBarEnabled
                     data.HPText.Visible = HPBarEnabled
                 end
@@ -799,8 +858,7 @@ local function IsVehicle(model)
     if model:FindFirstChildOfClass("Humanoid") then return false end
     if Players:GetPlayerFromCharacter(model) then return false end
     if NameMatchesVehicle(model.Name) then return true end
-    local hasSeat = model:FindFirstChildWhichIsA("VehicleSeat") or model:FindFirstChildWhichIsA("Seat")
-    if hasSeat then return true end
+    if model:FindFirstChildWhichIsA("VehicleSeat") or model:FindFirstChildWhichIsA("Seat") then return true end
     return false
 end
 
@@ -808,7 +866,6 @@ local function CreateVehicleESP(model)
     if VehicleObjects[model] then return end
     local anchor = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
     if not anchor then return end
-
     local bb = Instance.new("BillboardGui")
     bb.Name = "ETX_VehicleESP"
     bb.Size = UDim2.new(0, 180, 0, 40)
@@ -840,7 +897,6 @@ local function CreateVehicleESP(model)
     distLabel.Parent = bb
 
     local hl = Instance.new("Highlight")
-    hl.Name = "ETX_VehicleHighlight"
     hl.FillColor = VehicleESPColor
     hl.FillTransparency = VehicleESPTransparency
     hl.OutlineColor = Color3.fromRGB(255, 255, 255)
@@ -849,12 +905,9 @@ local function CreateVehicleESP(model)
     hl.Parent = model
 
     VehicleObjects[model] = {
-        Billboard = bb, NameLabel = nameLabel,
-        DistLabel = distLabel, Highlight = hl,
-        Model = model, Anchor = anchor,
-        BaseBB = Vector2.new(180, 40),
-        BaseNameSize = 15,
-        BaseDistSize = 13,
+        Billboard = bb, NameLabel = nameLabel, DistLabel = distLabel,
+        Highlight = hl, Model = model, Anchor = anchor,
+        BaseBB = Vector2.new(180, 40), BaseNameSize = 15, BaseDistSize = 13,
     }
 end
 
@@ -872,13 +925,9 @@ local function UpdateVehicleESP()
         for m in pairs(VehicleObjects) do RemoveVehicleESP(m) end
         return
     end
-
     for _, obj in ipairs(Workspace:GetChildren()) do
-        if obj:IsA("Model") and IsVehicle(obj) then
-            CreateVehicleESP(obj)
-        end
+        if obj:IsA("Model") and IsVehicle(obj) then CreateVehicleESP(obj) end
     end
-
     for model, data in pairs(VehicleObjects) do
         if not model or not model.Parent then RemoveVehicleESP(model); continue end
         local anchor = model.PrimaryPart or data.Anchor
@@ -897,9 +946,7 @@ local function UpdateVehicleESP()
                 data.DistLabel.TextColor3 = VehicleESPColor
                 data.Highlight.FillColor = VehicleESPColor
                 data.Highlight.FillTransparency = VehicleESPTransparency
-
-                local vScale = GetDistanceScale(d)
-                ApplyVehicleScale(data, vScale)
+                ApplyVehicleScale(data, GetDistanceScale(d))
             end
         end
     end
@@ -966,12 +1013,8 @@ local function UpdateSkeleton(character)
                 line.Color = SkeletonColor
                 line.Thickness = SkeletonThickness
                 line.Visible = true
-            else
-                line.Visible = false
-            end
-        else
-            line.Visible = false
-        end
+            else line.Visible = false end
+        else line.Visible = false end
     end
 end
 
@@ -986,7 +1029,6 @@ local function CreateChinaHat(character)
     if ChinaHatObjects[character] then return end
     local head = character:FindFirstChild("Head")
     if not head then return end
-
     local hat = Instance.new("Part")
     hat.Name = "ETX_ChinaHat"
     hat.Shape = Enum.PartType.Cylinder
@@ -1000,13 +1042,11 @@ local function CreateChinaHat(character)
     hat.Material = Enum.Material.SmoothPlastic
     hat.Color = ChinaHatColor
     hat.Transparency = 0.05
-
     local mesh = Instance.new("SpecialMesh")
     mesh.MeshType = Enum.MeshType.FileMesh
     mesh.MeshId = CONE_MESH_ID
     mesh.Scale = Vector3.new(ChinaHatScale, ChinaHatScale, ChinaHatScale)
     mesh.Parent = hat
-
     hat.Parent = Workspace
     ChinaHatObjects[character] = hat
 end
@@ -1014,9 +1054,7 @@ end
 local function UpdateChinaHat(character)
     local hat = ChinaHatObjects[character]
     if not hat then return end
-    if not character.Parent then
-        hat:Destroy(); ChinaHatObjects[character] = nil; return
-    end
+    if not character.Parent then hat:Destroy(); ChinaHatObjects[character] = nil; return end
     local head = character:FindFirstChild("Head")
     if not head then hat.Transparency = 1; return end
     hat.Transparency = 0.05
@@ -1034,7 +1072,7 @@ local function ClearAllHats()
     for c in pairs(ChinaHatObjects) do RemoveChinaHat(c) end
 end
 
--- ==================== INVISIBLE / MOD CHECK ====================
+-- ==================== INVIS / MOD CHECK ====================
 local function PartIsVisible(p)
     if p.Transparency < INVIS_THRESHOLD then return true end
     local ltm = p.LocalTransparencyModifier
@@ -1054,9 +1092,7 @@ local function IsFullyInvisible(character)
         elseif d:IsA("Accessory") then
             local handle = d:FindFirstChild("Handle")
             if handle and handle:IsA("BasePart") and PartIsVisible(handle) then return false end
-        elseif d:IsA("Shirt") or d:IsA("Pants") then
-            return false
-        end
+        elseif d:IsA("Shirt") or d:IsA("Pants") then return false end
     end
     if not hasAny then return false end
     return true
@@ -1066,9 +1102,7 @@ local function EvaluateVisibility(character)
     if not InvisibleAlertEnabled or not character then return false end
     local plr = Players:GetPlayerFromCharacter(character)
     local name = plr and plr.Name or (character.Name .. " (NPC)")
-
     local invis = IsFullyInvisible(character)
-
     if invis then
         InvisCounter[name] = (InvisCounter[name] or 0) + 1
     else
@@ -1082,14 +1116,9 @@ local function EvaluateVisibility(character)
             end
         end
     end
-
     if InvisCounter[name] >= FLAG_CONSECUTIVE_FRAMES and not Flagged[name] then
         Flagged[name] = true
-        Rayfield:Notify({
-            Title = "⚠ MODERATOR DETECTED",
-            Content = name .. " — model tàng hình",
-            Duration = 10,
-        })
+        Notify("⚠ MODERATOR DETECTED: " .. name, 8)
         local data = ESPObjects[character]
         if data and data.Highlight then
             data.Highlight.FillColor = Color3.fromRGB(255, 0, 0)
@@ -1106,13 +1135,9 @@ local function CheckModerator(player)
         if ok and rank and rank >= 200 then return true end
     end
     local lower = string.lower(player.Name)
-    for _, kw in ipairs(MOD_KEYWORDS) do
-        if lower:find(kw) then return true end
-    end
+    for _, kw in ipairs(MOD_KEYWORDS) do if lower:find(kw) then return true end end
     local dn = string.lower(player.DisplayName or "")
-    for _, kw in ipairs(MOD_KEYWORDS) do
-        if dn:find(kw) then return true end
-    end
+    for _, kw in ipairs(MOD_KEYWORDS) do if dn:find(kw) then return true end end
     return false
 end
 
@@ -1122,19 +1147,17 @@ local function ScanForModerators(notify)
         if plr ~= LocalPlayer and CheckModerator(plr) then table.insert(found, plr.Name) end
     end
     if notify and #found > 0 then
-        Rayfield:Notify({Title = "⚠ MODERATOR", Content = table.concat(found, ", "), Duration = 8})
+        Notify("⚠ MODERATOR: " .. table.concat(found, ", "), 8)
     end
     return found
 end
 
 Players.PlayerAdded:Connect(function(plr)
     task.wait(1)
-    if CheckModerator(plr) then
-        Rayfield:Notify({Title = "⚠ MODERATOR JOINED", Content = plr.Name, Duration = 8})
-    end
+    if CheckModerator(plr) then Notify("⚠ MODERATOR JOINED: " .. plr.Name, 8) end
 end)
 
--- ==================== TARGET PREVIEW ====================
+-- ==================== PREVIEW ====================
 local function SafeClone(character)
     local states = {}
     local targets = {character}
@@ -1147,13 +1170,10 @@ local function SafeClone(character)
         states[d] = d.Archivable
         pcall(function() d.Archivable = true end)
     end
-
     local ok, clone = pcall(function() return character:Clone() end)
-
     for d, s in pairs(states) do
         if d and d.Parent then pcall(function() d.Archivable = s end) end
     end
-
     if not ok or not clone then return nil end
     return clone
 end
@@ -1167,14 +1187,12 @@ local function CreatePreviewFrame()
     ScreenGui.Parent = CoreGui
 
     local frame = Instance.new("Frame")
-    frame.Name = "PreviewFrame"
     frame.Size = PreviewSize
     frame.Position = PreviewPos
     frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
     frame.BackgroundTransparency = 0.3
     frame.BorderSizePixel = 0
     frame.Active = true
-    frame.Draggable = false
     frame.Parent = ScreenGui
 
     local corner = Instance.new("UICorner")
@@ -1197,7 +1215,6 @@ local function CreatePreviewFrame()
     title.Parent = frame
 
     local vp = Instance.new("ViewportFrame")
-    vp.Name = "Viewport"
     vp.Size = UDim2.new(1, -8, 1, -28)
     vp.Position = UDim2.new(0, 4, 0, 24)
     vp.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
@@ -1227,17 +1244,12 @@ local function CreatePreviewFrame()
             startPos = frame.Position
         end
     end)
-
     frame.InputChanged:Connect(function(input)
         if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
             local delta = input.Position - dragStart
-            frame.Position = UDim2.new(
-                startPos.X.Scale, startPos.X.Offset + delta.X,
-                startPos.Y.Scale, startPos.Y.Offset + delta.Y
-            )
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
         end
     end)
-
     UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
     end)
@@ -1261,58 +1273,26 @@ local function SetPreviewTarget(character)
     if PreviewTarget == character then return end
     ClearPreview()
     if not character then return end
-
     local clone = SafeClone(character)
-    if not clone then
-        clone = Instance.new("Model")
-        clone.Name = character.Name .. "_Preview"
-        for _, d in ipairs(character:GetDescendants()) do
-            if d:IsA("BasePart") then
-                local ok, p = pcall(function() return d:Clone() end)
-                if ok and p then
-                    p.Anchored = false
-                    p.CanCollide = false
-                    p.CanQuery = false
-                    p.CanTouch = false
-                    p.Parent = clone
-                end
-            elseif d:IsA("Accessory") or d:IsA("Shirt") or d:IsA("Pants") then
-                local ok, a = pcall(function() return d:Clone() end)
-                if ok and a then a.Parent = clone end
-            end
-        end
-        local root = character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Head") or character:FindFirstChildWhichIsA("BasePart")
-        if root then
-            clone.PrimaryPart = clone:FindFirstChild(root.Name) or clone:FindFirstChildWhichIsA("BasePart")
-        end
-    else
-        for _, d in ipairs(clone:GetDescendants()) do
-            if d:IsA("BasePart") then
-                pcall(function() d.Anchored = false end)
-            end
-        end
+    if not clone then return end
+    for _, d in ipairs(clone:GetDescendants()) do
+        if d:IsA("BasePart") then pcall(function() d.Anchored = false end) end
     end
-
     clone.Parent = PreviewWorld
-
     local cloneHum = clone:FindFirstChildOfClass("Humanoid")
     if cloneHum then
         if not cloneHum:FindFirstChildOfClass("Animator") then
-            local anim = Instance.new("Animator")
-            anim.Parent = cloneHum
+            local anim = Instance.new("Animator"); anim.Parent = cloneHum
         end
         cloneHum.PlatformStand = true
     end
-
     local ok, center = pcall(function() return clone:GetPivot().Position end)
     if not ok or not center then center = Vector3.new(0, 0, 0) end
     local ok2, size = pcall(function() return clone:GetExtentsSize() end)
     if not ok2 or not size then size = Vector3.new(4, 6, 4) end
     local distance = math.max(size.X, size.Y, size.Z) * 2.2
     PreviewCam.CFrame = CFrame.new(center + Vector3.new(0, size.Y * 0.2, distance), center)
-
     PreviewTarget = character
-
     local plr = Players:GetPlayerFromCharacter(character)
     local name = plr and plr.Name or (character.Name .. " (NPC)")
     if PreviewFrame then
@@ -1322,17 +1302,14 @@ local function SetPreviewTarget(character)
     end
 end
 
--- ==================== PREVIEW ANIMATION SYNC ====================
 local function SyncPreviewAnimation()
     if not PreviewTarget or not PreviewTarget.Parent then return end
     if not PreviewWorld then return end
-
     local clone = nil
     for _, c in ipairs(PreviewWorld:GetChildren()) do
         if c:IsA("Model") then clone = c; break end
     end
     if not clone then return end
-
     for _, origMotor in ipairs(PreviewTarget:GetDescendants()) do
         if origMotor:IsA("Motor6D") then
             local parentName = origMotor.Parent and origMotor.Parent.Name
@@ -1351,7 +1328,6 @@ local function SyncPreviewAnimation()
             end
         end
     end
-
     local origHum = PreviewTarget:FindFirstChildOfClass("Humanoid")
     local cloneHum = clone:FindFirstChildOfClass("Humanoid")
     if origHum and cloneHum then
@@ -1360,25 +1336,18 @@ local function SyncPreviewAnimation()
         if origAnimator and cloneAnimator then
             local origTracks = origAnimator:GetPlayingAnimationTracks()
             local cloneTracks = cloneAnimator:GetPlayingAnimationTracks()
-
             local needReload = (#origTracks ~= #cloneTracks)
             if not needReload then
                 for i, t in ipairs(origTracks) do
                     if not cloneTracks[i] or cloneTracks[i].Animation.AnimationId ~= t.Animation.AnimationId then
-                        needReload = true
-                        break
+                        needReload = true; break
                     end
                 end
             end
-
             if needReload then
-                for _, t in ipairs(cloneTracks) do
-                    pcall(function() t:Stop() end)
-                end
+                for _, t in ipairs(cloneTracks) do pcall(function() t:Stop() end) end
                 for _, t in ipairs(origTracks) do
-                    local ok, newTrack = pcall(function()
-                        return cloneAnimator:LoadAnimation(t.Animation)
-                    end)
+                    local ok, newTrack = pcall(function() return cloneAnimator:LoadAnimation(t.Animation) end)
                     if ok and newTrack then
                         pcall(function()
                             newTrack.Priority = t.Priority
@@ -1393,9 +1362,7 @@ local function SyncPreviewAnimation()
                     if ct then
                         pcall(function()
                             local delta = math.abs(ct.TimePosition - t.TimePosition)
-                            if delta > 0.05 then
-                                ct.TimePosition = t.TimePosition
-                            end
+                            if delta > 0.05 then ct.TimePosition = t.TimePosition end
                             ct:AdjustSpeed(t.Speed)
                         end)
                     end
@@ -1414,16 +1381,13 @@ RunService:BindToRenderStep("ETX_Aimbot", Enum.RenderPriority.Camera.Value + 1, 
         FOVCircle.Position = Vector2.new(vp.X / 2, vp.Y / 2)
         FOVCircle.Color = AimbotActive and Color3.fromRGB(255, 50, 50) or Color3.fromRGB(255, 255, 255)
     end
-
     local target = nil
     if AimbotMaster and AimbotActive then
         target = GetClosestTarget()
         if target then AimAt(target) end
     end
-
     if TargetLine then
         if AimbotMaster and TargetLineEnabled then
-            -- Line bám LockedTarget để khớp với aimbot; nếu chưa lock thì preview target gần nhất
             local lineTarget = LockedTarget or GetClosestTarget()
             if lineTarget then
                 local part = GetTargetPart(lineTarget, TargetPart)
@@ -1441,7 +1405,6 @@ RunService:BindToRenderStep("ETX_Aimbot", Enum.RenderPriority.Camera.Value + 1, 
             else TargetLine.Visible = false end
         else TargetLine.Visible = false end
     end
-
     if PreviewEnabled and PreviewFrame then
         local previewTarget = nil
         if AimbotMaster and TargetLineEnabled then
@@ -1477,53 +1440,41 @@ RunService.RenderStepped:Connect(function()
     if SkeletonEnabled and ESPEnabled then
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= LocalPlayer and plr.Character then
-                CreateSkeleton(plr.Character)
-                UpdateSkeleton(plr.Character)
+                CreateSkeleton(plr.Character); UpdateSkeleton(plr.Character)
             end
         end
         for _, npc in ipairs(Workspace:GetChildren()) do
             if npc:IsA("Model") and npc:FindFirstChildOfClass("Humanoid") and npc:FindFirstChild("Head") then
-                if IsNPC(npc) then
-                    CreateSkeleton(npc)
-                    UpdateSkeleton(npc)
-                end
+                if IsNPC(npc) then CreateSkeleton(npc); UpdateSkeleton(npc) end
             end
         end
         for c in pairs(SkeletonObjects) do
             if not c.Parent then RemoveSkeleton(c) end
         end
-    else
-        ClearAllSkeletons()
-    end
+    else ClearAllSkeletons() end
 
     if ChinaHatEnabled and ESPEnabled then
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= LocalPlayer and plr.Character then
-                CreateChinaHat(plr.Character)
-                UpdateChinaHat(plr.Character)
+                CreateChinaHat(plr.Character); UpdateChinaHat(plr.Character)
             end
         end
         for _, npc in ipairs(Workspace:GetChildren()) do
             if npc:IsA("Model") and npc:FindFirstChildOfClass("Humanoid") and npc:FindFirstChild("Head") then
-                if IsNPC(npc) then
-                    CreateChinaHat(npc)
-                    UpdateChinaHat(npc)
-                end
+                if IsNPC(npc) then CreateChinaHat(npc); UpdateChinaHat(npc) end
             end
         end
         for c in pairs(ChinaHatObjects) do
             if not c.Parent then RemoveChinaHat(c) end
         end
-    else
-        ClearAllHats()
-    end
+    else ClearAllHats() end
 end)
 
 -- ==================== KEYBIND CAPTURE ====================
 local function StartKeyCapture()
     if CapturingKey then return end
     CapturingKey = true
-    Rayfield:Notify({Title = "ETX", Content = "Nhấn phím hoặc chuột để gán...", Duration = 3})
+    Notify("Nhấn phím hoặc chuột để gán...", 3)
     if CaptureConn then CaptureConn:Disconnect() end
     CaptureConn = UserInputService.InputBegan:Connect(function(input)
         if not CapturingKey then return end
@@ -1536,110 +1487,240 @@ local function StartKeyCapture()
             AimbotKeybind = key
             CapturingKey = false
             CaptureConn:Disconnect()
-            Rayfield:Notify({Title = "ETX", Content = "Đã gán: " .. key, Duration = 3})
+            SaveConfig()
+            Notify("Đã gán: " .. key, 3)
         end
     end)
     task.delay(5, function()
         if CapturingKey then
             CapturingKey = false
             if CaptureConn then CaptureConn:Disconnect() end
-            Rayfield:Notify({Title = "ETX", Content = "Hết giờ gán phím.", Duration = 2})
+            Notify("Hết giờ gán phím.", 2)
         end
     end)
 end
 
--- ==================== UI ====================
-local CombatTab = Window:CreateTab("Combat", 4483362458)
-CombatTab:CreateSection("Aimbot")
-CombatTab:CreateToggle({Name = "Bật Aimbot (Master)", CurrentValue = false, Flag = "AimbotMaster",
+-- ==================== UI: COMBAT ====================
+local CombatTab = Window:Tab({ Title = "Combat" })
+
+local AimbotSection = CombatTab:Section({ Title = "Aimbot" })
+
+AimbotSection:Toggle({
+    Title = "Bật Aimbot (Master)",
+    Value = AimbotMaster,
     Callback = function(v)
         AimbotMaster = v
-        if not v then
-            AimbotActive = false
-            ClearTargetLock()
-        end
-    end})
-CombatTab:CreateDropdown({Name = "Chế độ Keybind", Options = {"Toggle", "Hold", "Always"},
-    CurrentOption = "Toggle", Flag = "AimbotMode",
+        if not v then AimbotActive = false; ClearTargetLock(true) end
+        SaveConfig()
+    end
+})
+
+AimbotSection:Dropdown({
+    Title = "Chế độ Keybind",
+    Values = {"Toggle", "Hold", "Always"},
+    Value = AimbotMode,
     Callback = function(opt)
         AimbotMode = opt
         if opt == "Always" then AimbotActive = true
-        else AimbotActive = false
-        ClearTargetLock() end
-    end})
-CombatTab:CreateButton({Name = "Gán phím Aimbot", Callback = function() StartKeyCapture() end})
-CombatTab:CreateSlider({Name = "FOV", Range = {10, 500}, Increment = 10, Suffix = "px",
-    CurrentValue = 150, Flag = "FOV", Callback = function(v) FOV = v end})
-CombatTab:CreateDropdown({Name = "Target Part", Options = {"Head", "Torso", "HumanoidRootPart"},
-    CurrentOption = "Head", Flag = "TargetPart", Callback = function(o) TargetPart = o end})
-CombatTab:CreateSlider({Name = "Smoothness", Range = {0.01, 1}, Increment = 0.01, Suffix = "",
-    CurrentValue = 0.15, Flag = "Smoothness", Callback = function(v) Smoothness = v end})
-CombatTab:CreateToggle({Name = "Hiện Targetline", CurrentValue = true, Flag = "TargetLine",
-    Callback = function(v) TargetLineEnabled = v end})
-CombatTab:CreateToggle({Name = "Target NPC (tắt khi PvP)", CurrentValue = false, Flag = "TargetNPC",
-    Callback = function(v) TargetNPCEnabled = v end})
+        else AimbotActive = false; ClearTargetLock(true) end
+        SaveConfig()
+    end
+})
 
-CombatTab:CreateSection("Dự đoán hướng đi")
-CombatTab:CreateToggle({Name = "Bật dự đoán hướng đi (Lead)", CurrentValue = true, Flag = "LeadToggle",
-    Callback = function(v) PredictionLead = v end})
-CombatTab:CreateSlider({Name = "Hệ số lead", Range = {0.5, 2.0}, Increment = 0.05, Suffix = "x",
-    CurrentValue = 1.0, Flag = "LeadMult",
-    Callback = function(v) PredictionLeadMultiplier = v end})
-CombatTab:CreateToggle({Name = "Lead cả trục Y (địch nhảy/rơi)", CurrentValue = false, Flag = "LeadVert",
-    Callback = function(v) PredictionLeadVertical = v end})
+AimbotSection:Button({
+    Title = "Gán phím Aimbot (hiện tại: " .. AimbotKeybind .. ")",
+    Callback = function() StartKeyCapture() end
+})
 
-CombatTab:CreateSection("Target Lock")
-CombatTab:CreateToggle({Name = "Ghim mục tiêu (không tự đổi)", CurrentValue = true, Flag = "TargetLockToggle",
+AimbotSection:Slider({
+    Title = "FOV",
+    Value = FOV,
+    Min = 10,
+    Max = 500,
+    Rounding = 0,
+    Callback = function(v) FOV = v; SaveConfig() end
+})
+
+AimbotSection:Dropdown({
+    Title = "Target Part",
+    Values = {"Head", "Torso", "HumanoidRootPart"},
+    Value = TargetPart,
+    Callback = function(o) TargetPart = o; SaveConfig() end
+})
+
+AimbotSection:Slider({
+    Title = "Smoothness",
+    Value = Smoothness,
+    Min = 0.01,
+    Max = 1,
+    Rounding = 2,
+    Callback = function(v) Smoothness = v; SaveConfig() end
+})
+
+AimbotSection:Toggle({
+    Title = "Hiện Targetline",
+    Value = TargetLineEnabled,
+    Callback = function(v) TargetLineEnabled = v; SaveConfig() end
+})
+
+AimbotSection:Toggle({
+    Title = "Target NPC (tắt khi PvP)",
+    Value = TargetNPCEnabled,
+    Callback = function(v) TargetNPCEnabled = v; SaveConfig() end
+})
+
+local LeadSection = CombatTab:Section({ Title = "Dự đoán hướng đi" })
+
+LeadSection:Toggle({
+    Title = "Bật dự đoán hướng đi (Lead)",
+    Value = PredictionLead,
+    Callback = function(v) PredictionLead = v; SaveConfig() end
+})
+
+LeadSection:Slider({
+    Title = "Hệ số lead",
+    Value = PredictionLeadMultiplier,
+    Min = 0.5,
+    Max = 2,
+    Rounding = 2,
+    Callback = function(v) PredictionLeadMultiplier = v; SaveConfig() end
+})
+
+LeadSection:Toggle({
+    Title = "Lead cả trục Y (địch nhảy/rơi)",
+    Value = PredictionLeadVertical,
+    Callback = function(v) PredictionLeadVertical = v; SaveConfig() end
+})
+
+local LockSection = CombatTab:Section({ Title = "Target Lock" })
+
+LockSection:Toggle({
+    Title = "Ghim mục tiêu (không tự đổi)",
+    Value = TargetLockEnabled,
     Callback = function(v)
         TargetLockEnabled = v
         if not v then ClearTargetLock() end
-    end})
-CombatTab:CreateSlider({Name = "Hệ số FOV nhả lock", Range = {1.0, 3.0}, Increment = 0.1, Suffix = "x",
-    CurrentValue = 1.8, Flag = "LockReleaseMult",
-    Callback = function(v) LockReleaseFOVMult = v end})
-CombatTab:CreateSlider({Name = "Grace mất dấu (frame)", Range = {5, 120}, Increment = 5, Suffix = "f",
-    CurrentValue = 30, Flag = "LockGrace",
-    Callback = function(v) LockLostGraceFrames = v end})
-CombatTab:CreateSlider({Name = "Frame để đổi target", Range = {1, 30}, Increment = 1, Suffix = "f",
-    CurrentValue = 8, Flag = "LockSwitch",
-    Callback = function(v) LockSwitchFrames = v end})
-CombatTab:CreateButton({Name = "Nhả lock ngay", Callback = function() ClearTargetLock() end})
+        SaveConfig()
+    end
+})
 
--- Prediction (bullet drop)
-local PredTab = Window:CreateTab("Prediction", 4483362458)
-PredTab:CreateSection("Bullet Drop (Wiki-based)")
-PredTab:CreateToggle({Name = "Bật Bullet Drop", CurrentValue = true, Flag = "PredToggle",
-    Callback = function(v) PredictionEnabled = v end})
-PredTab:CreateSlider({Name = "Tốc độ đạn thủ công (m/s)", Range = {100, 2000}, Increment = 1, Suffix = "m/s",
-    CurrentValue = 715, Flag = "BulletSpeed", Callback = function(v) BulletSpeed = v end})
-PredTab:CreateButton({Name = "Quét tốc độ đạn từ súng (Wiki)",
+LockSection:Slider({
+    Title = "Hệ số FOV nhả lock",
+    Value = LockReleaseFOVMult,
+    Min = 1,
+    Max = 3,
+    Rounding = 1,
+    Callback = function(v) LockReleaseFOVMult = v; SaveConfig() end
+})
+
+LockSection:Slider({
+    Title = "Grace mất dấu (frame)",
+    Value = LockLostGraceFrames,
+    Min = 5,
+    Max = 120,
+    Rounding = 0,
+    Callback = function(v) LockLostGraceFrames = v; SaveConfig() end
+})
+
+LockSection:Slider({
+    Title = "Frame để đổi target",
+    Value = LockSwitchFrames,
+    Min = 1,
+    Max = 30,
+    Rounding = 0,
+    Callback = function(v) LockSwitchFrames = v; SaveConfig() end
+})
+
+LockSection:Button({
+    Title = "Nhả lock ngay (giữ target trong pool)",
+    Callback = function() ClearTargetLock(false) end
+})
+
+LockSection:Button({
+    Title = "Xóa target bị loại trừ",
     Callback = function()
-        local ok = UpdateBulletSpeed()
-        if ok then
-            Rayfield:Notify({Title = "ETX", Content = "Wiki scan: " .. CurrentBulletSpeed .. " m/s", Duration = 3})
-        else
-            Rayfield:Notify({Title = "ETX", Content = "Không match wiki, nhập tay.", Duration = 3})
-        end
-    end})
-PredTab:CreateSlider({Name = "Trọng lực (studs/s²)", Range = {50, 500}, Increment = 10, Suffix = "studs/s²",
-    CurrentValue = 196.2, Flag = "BulletGravity", Callback = function(v) BulletGravity = v end})
+        ClearExclusion()
+        Notify("Đã xóa exclusion — aimbot có thể lock lại mọi target.", 3)
+    end
+})
 
--- ESP
-local ESPTab = Window:CreateTab("ESP", 4483362458)
-ESPTab:CreateSection("Visuals")
-ESPTab:CreateToggle({Name = "Bật ESP", CurrentValue = false, Flag = "ESPToggle",
-    Callback = function(v) ESPEnabled = v end})
-ESPTab:CreateSlider({Name = "Khoảng cách tối đa (m)", Range = {100, 30000}, Increment = 100, Suffix = "m",
-    CurrentValue = 5000, Flag = "MaxDistance", Callback = function(v) MaxDistance = v end})
-ESPTab:CreateSlider({Name = "Độ trong suốt", Range = {0, 1}, Increment = 0.05, Suffix = "",
-    CurrentValue = 0.5, Flag = "ESPTransparency",
+-- ==================== UI: PREDICTION ====================
+local PredTab = Window:Tab({ Title = "Prediction" })
+local PredSection = PredTab:Section({ Title = "Bullet Drop (Wiki-based)" })
+
+PredSection:Toggle({
+    Title = "Bật Bullet Drop",
+    Value = PredictionEnabled,
+    Callback = function(v) PredictionEnabled = v; SaveConfig() end
+})
+
+PredSection:Slider({
+    Title = "Tốc độ đạn thủ công (m/s)",
+    Value = BulletSpeed,
+    Min = 100,
+    Max = 2000,
+    Rounding = 0,
+    Callback = function(v) BulletSpeed = v; SaveConfig() end
+})
+
+PredSection:Button({
+    Title = "Quét tốc độ đạn từ súng (Wiki)",
+    Callback = function()
+        if UpdateBulletSpeed() then
+            Notify("Wiki scan: " .. CurrentBulletSpeed .. " m/s", 3)
+            SaveConfig()
+        else
+            Notify("Không match wiki, nhập tay.", 3)
+        end
+    end
+})
+
+PredSection:Slider({
+    Title = "Trọng lực (studs/s²)",
+    Value = BulletGravity,
+    Min = 50,
+    Max = 500,
+    Rounding = 0,
+    Callback = function(v) BulletGravity = v; SaveConfig() end
+})
+
+-- ==================== UI: ESP ====================
+local ESPTab = Window:Tab({ Title = "ESP" })
+local ESPVisSection = ESPTab:Section({ Title = "Visuals" })
+
+ESPVisSection:Toggle({
+    Title = "Bật ESP",
+    Value = ESPEnabled,
+    Callback = function(v) ESPEnabled = v; SaveConfig() end
+})
+
+ESPVisSection:Slider({
+    Title = "Khoảng cách tối đa (m)",
+    Value = MaxDistance,
+    Min = 100,
+    Max = 30000,
+    Rounding = 0,
+    Callback = function(v) MaxDistance = v; SaveConfig() end
+})
+
+ESPVisSection:Slider({
+    Title = "Độ trong suốt",
+    Value = ESPTransparency,
+    Min = 0,
+    Max = 1,
+    Rounding = 2,
     Callback = function(v)
         ESPTransparency = v
         for _, d in pairs(ESPObjects) do
             if d.Highlight then d.Highlight.FillTransparency = v end
         end
-    end})
-ESPTab:CreateColorPicker({Name = "Màu ESP", Color = Color3.fromRGB(0, 255, 0), Flag = "ESPColor",
+        SaveConfig()
+    end
+})
+
+ESPVisSection:ColorPicker({
+    Title = "Màu ESP",
+    Color = ESPColor,
     Callback = function(c)
         ESPColor = c
         for _, d in pairs(ESPObjects) do
@@ -1647,35 +1728,75 @@ ESPTab:CreateColorPicker({Name = "Màu ESP", Color = Color3.fromRGB(0, 255, 0), 
             if d.DistLabel then d.DistLabel.TextColor3 = c end
             if d.Highlight then d.Highlight.FillColor = c end
         end
-    end})
+        SaveConfig()
+    end
+})
 
-ESPTab:CreateSection("Fixed Scale")
-ESPTab:CreateToggle({Name = "Bật scale theo khoảng cách", CurrentValue = true, Flag = "ESPDynScale",
-    Callback = function(v) ESPDynamicScale = v end})
-ESPTab:CreateSlider({Name = "Scale tối đa", Range = {0.8, 1.5}, Increment = 0.05, Suffix = "x",
-    CurrentValue = 1.0, Flag = "ESPMaxScale",
-    Callback = function(v) ESPMaxScale = v end})
-ESPTab:CreateSlider({Name = "Scale tối thiểu", Range = {0.5, 1.0}, Increment = 0.05, Suffix = "x",
-    CurrentValue = 0.75, Flag = "ESPMinScale",
-    Callback = function(v) ESPMinScale = v end})
-ESPTab:CreateSlider({Name = "Bắt đầu thu nhỏ từ (m)", Range = {50, 300}, Increment = 10, Suffix = "m",
-    CurrentValue = 100, Flag = "ESPNear",
-    Callback = function(v) ESPNearDistance = v end})
-ESPTab:CreateSlider({Name = "Nhỏ nhất từ (m)", Range = {200, 2000}, Increment = 50, Suffix = "m",
-    CurrentValue = 400, Flag = "ESPFar",
-    Callback = function(v) ESPFarDistance = v end})
+local ScaleSection = ESPTab:Section({ Title = "Fixed Scale" })
 
-ESPTab:CreateSection("Health Bar")
-ESPTab:CreateToggle({Name = "Hiện Health Bar %", CurrentValue = true, Flag = "HPBarToggle",
+ScaleSection:Toggle({
+    Title = "Bật scale theo khoảng cách",
+    Value = ESPDynamicScale,
+    Callback = function(v) ESPDynamicScale = v; SaveConfig() end
+})
+
+ScaleSection:Slider({
+    Title = "Scale tối đa",
+    Value = ESPMaxScale,
+    Min = 0.8,
+    Max = 1.5,
+    Rounding = 2,
+    Callback = function(v) ESPMaxScale = v; SaveConfig() end
+})
+
+ScaleSection:Slider({
+    Title = "Scale tối thiểu",
+    Value = ESPMinScale,
+    Min = 0.5,
+    Max = 1,
+    Rounding = 2,
+    Callback = function(v) ESPMinScale = v; SaveConfig() end
+})
+
+ScaleSection:Slider({
+    Title = "Bắt đầu thu nhỏ từ (m)",
+    Value = ESPNearDistance,
+    Min = 50,
+    Max = 300,
+    Rounding = 0,
+    Callback = function(v) ESPNearDistance = v; SaveConfig() end
+})
+
+ScaleSection:Slider({
+    Title = "Nhỏ nhất từ (m)",
+    Value = ESPFarDistance,
+    Min = 200,
+    Max = 2000,
+    Rounding = 0,
+    Callback = function(v) ESPFarDistance = v; SaveConfig() end
+})
+
+local HPSection = ESPTab:Section({ Title = "Health Bar" })
+
+HPSection:Toggle({
+    Title = "Hiện Health Bar %",
+    Value = HPBarEnabled,
     Callback = function(v)
         HPBarEnabled = v
         for _, d in pairs(ESPObjects) do
             if d.HPBg then d.HPBg.Visible = v end
             if d.HPText then d.HPText.Visible = v end
         end
-    end})
-ESPTab:CreateSlider({Name = "Chiều rộng Health Bar", Range = {60, 240}, Increment = 10, Suffix = "px",
-    CurrentValue = 120, Flag = "HPBarWidth",
+        SaveConfig()
+    end
+})
+
+HPSection:Slider({
+    Title = "Chiều rộng Health Bar",
+    Value = HPBarWidth,
+    Min = 60,
+    Max = 240,
+    Rounding = 0,
     Callback = function(v)
         HPBarWidth = v
         for _, d in pairs(ESPObjects) do
@@ -1685,21 +1806,47 @@ ESPTab:CreateSlider({Name = "Chiều rộng Health Bar", Range = {60, 240}, Incr
                 d.HPBg.Position = UDim2.new(0.5, -v/2, 0, 0)
             end
         end
-    end})
+        SaveConfig()
+    end
+})
 
-ESPTab:CreateSection("Skeleton")
-ESPTab:CreateToggle({Name = "Bật Skeleton", CurrentValue = true, Flag = "SkeletonToggle",
-    Callback = function(v) SkeletonEnabled = v; if not v then ClearAllSkeletons() end end})
-ESPTab:CreateSlider({Name = "Độ dày Skeleton", Range = {1, 4}, Increment = 1, Suffix = "px",
-    CurrentValue = 1, Flag = "SkelThick", Callback = function(v) SkeletonThickness = v end})
-ESPTab:CreateColorPicker({Name = "Màu Skeleton", Color = Color3.fromRGB(255, 255, 255), Flag = "SkelColor",
-    Callback = function(c) SkeletonColor = c end})
+local SkelSection = ESPTab:Section({ Title = "Skeleton" })
 
-ESPTab:CreateSection("China Hat")
-ESPTab:CreateToggle({Name = "Bật China Hat", CurrentValue = true, Flag = "HatToggle",
-    Callback = function(v) ChinaHatEnabled = v; if not v then ClearAllHats() end end})
-ESPTab:CreateSlider({Name = "Scale Hat", Range = {0.5, 3}, Increment = 0.1, Suffix = "x",
-    CurrentValue = 1, Flag = "HatScale",
+SkelSection:Toggle({
+    Title = "Bật Skeleton",
+    Value = SkeletonEnabled,
+    Callback = function(v) SkeletonEnabled = v; if not v then ClearAllSkeletons() end; SaveConfig() end
+})
+
+SkelSection:Slider({
+    Title = "Độ dày Skeleton",
+    Value = SkeletonThickness,
+    Min = 1,
+    Max = 4,
+    Rounding = 0,
+    Callback = function(v) SkeletonThickness = v; SaveConfig() end
+})
+
+SkelSection:ColorPicker({
+    Title = "Màu Skeleton",
+    Color = SkeletonColor,
+    Callback = function(c) SkeletonColor = c; SaveConfig() end
+})
+
+local HatSection = ESPTab:Section({ Title = "China Hat" })
+
+HatSection:Toggle({
+    Title = "Bật China Hat",
+    Value = ChinaHatEnabled,
+    Callback = function(v) ChinaHatEnabled = v; if not v then ClearAllHats() end; SaveConfig() end
+})
+
+HatSection:Slider({
+    Title = "Scale Hat",
+    Value = ChinaHatScale,
+    Min = 0.5,
+    Max = 3,
+    Rounding = 1,
     Callback = function(v)
         ChinaHatScale = v
         for _, hat in pairs(ChinaHatObjects) do
@@ -1707,27 +1854,46 @@ ESPTab:CreateSlider({Name = "Scale Hat", Range = {0.5, 3}, Increment = 0.1, Suff
             local m = hat:FindFirstChildOfClass("SpecialMesh")
             if m then m.Scale = Vector3.new(v, v, v) end
         end
-    end})
-ESPTab:CreateColorPicker({Name = "Màu China Hat", Color = Color3.fromRGB(220, 30, 30), Flag = "HatColor",
-    Callback = function(c) ChinaHatColor = c end})
+        SaveConfig()
+    end
+})
 
-ESPTab:CreateSection("Vehicle / Aircraft")
-ESPTab:CreateToggle({Name = "Bật ESP Vehicle (MI-24V, Heli)", CurrentValue = true, Flag = "VehicleESPToggle",
+HatSection:ColorPicker({
+    Title = "Màu China Hat",
+    Color = ChinaHatColor,
+    Callback = function(c) ChinaHatColor = c; SaveConfig() end
+})
+
+local VehSection = ESPTab:Section({ Title = "Vehicle / Aircraft" })
+
+VehSection:Toggle({
+    Title = "Bật ESP Vehicle (MI-24V, Heli)",
+    Value = VehicleESPEnabled,
     Callback = function(v)
         VehicleESPEnabled = v
-        if not v then
-            for m in pairs(VehicleObjects) do RemoveVehicleESP(m) end
-        end
-    end})
-ESPTab:CreateSlider({Name = "Độ trong suốt Vehicle", Range = {0, 1}, Increment = 0.05, Suffix = "",
-    CurrentValue = 0.5, Flag = "VehicleTrans",
+        if not v then for m in pairs(VehicleObjects) do RemoveVehicleESP(m) end end
+        SaveConfig()
+    end
+})
+
+VehSection:Slider({
+    Title = "Độ trong suốt Vehicle",
+    Value = VehicleESPTransparency,
+    Min = 0,
+    Max = 1,
+    Rounding = 2,
     Callback = function(v)
         VehicleESPTransparency = v
         for _, d in pairs(VehicleObjects) do
             if d.Highlight then d.Highlight.FillTransparency = v end
         end
-    end})
-ESPTab:CreateColorPicker({Name = "Màu Vehicle ESP", Color = Color3.fromRGB(0, 200, 255), Flag = "VehicleColor",
+        SaveConfig()
+    end
+})
+
+VehSection:ColorPicker({
+    Title = "Màu Vehicle ESP",
+    Color = VehicleESPColor,
     Callback = function(c)
         VehicleESPColor = c
         for _, d in pairs(VehicleObjects) do
@@ -1735,24 +1901,38 @@ ESPTab:CreateColorPicker({Name = "Màu Vehicle ESP", Color = Color3.fromRGB(0, 2
             if d.DistLabel then d.DistLabel.TextColor3 = c end
             if d.Highlight then d.Highlight.FillColor = c end
         end
-    end})
+        SaveConfig()
+    end
+})
 
--- Visuals
-local VisualTab = Window:CreateTab("Visuals", 4483362458)
-VisualTab:CreateSection("Lighting")
-VisualTab:CreateToggle({Name = "FullBright toàn map", CurrentValue = false, Flag = "FullBright",
+-- ==================== UI: VISUALS ====================
+local VisualTab = Window:Tab({ Title = "Visuals" })
+local LightSection = VisualTab:Section({ Title = "Lighting" })
+
+LightSection:Toggle({
+    Title = "FullBright toàn map",
+    Value = FullBrightEnabled,
     Callback = function(v)
         FullBrightEnabled = v
         if v then ApplyFullBright() else RestoreLighting() end
-    end})
-VisualTab:CreateButton({Name = "Reset Lighting",
+        SaveConfig()
+    end
+})
+
+LightSection:Button({
+    Title = "Reset Lighting",
     Callback = function()
         FullBrightEnabled = false
         RestoreLighting()
-    end})
+        SaveConfig()
+    end
+})
 
-VisualTab:CreateSection("Map Cleanup")
-VisualTab:CreateToggle({Name = "Xóa cỏ (Grass)", CurrentValue = false, Flag = "GrassRemove",
+local MapSection = VisualTab:Section({ Title = "Map Cleanup" })
+
+MapSection:Toggle({
+    Title = "Xóa cỏ (Grass)",
+    Value = GrassRemoverEnabled,
     Callback = function(v)
         GrassRemoverEnabled = v
         if v then RemoveAllGrass()
@@ -1763,8 +1943,13 @@ VisualTab:CreateToggle({Name = "Xóa cỏ (Grass)", CurrentValue = false, Flag =
             end
             for _, obj in ipairs(list) do ShowObject(obj) end
         end
-    end})
-VisualTab:CreateToggle({Name = "Xóa lá cây (Leaves/Trees)", CurrentValue = false, Flag = "LeavesRemove",
+        SaveConfig()
+    end
+})
+
+MapSection:Toggle({
+    Title = "Xóa lá cây (Leaves/Trees)",
+    Value = LeavesRemoverEnabled,
     Callback = function(v)
         LeavesRemoverEnabled = v
         if v then RemoveAllLeaves()
@@ -1775,35 +1960,56 @@ VisualTab:CreateToggle({Name = "Xóa lá cây (Leaves/Trees)", CurrentValue = fa
             end
             for _, obj in ipairs(list) do ShowObject(obj) end
         end
-    end})
-VisualTab:CreateButton({Name = "Khôi phục toàn bộ map",
+        SaveConfig()
+    end
+})
+
+MapSection:Button({
+    Title = "Khôi phục toàn bộ map",
     Callback = function()
         RestoreAllHidden()
         GrassRemoverEnabled = false
         LeavesRemoverEnabled = false
-        Rayfield:Notify({Title = "ETX", Content = "Đã khôi phục map.", Duration = 3})
-    end})
+        SaveConfig()
+        Notify("Đã khôi phục map.", 3)
+    end
+})
 
--- Preview
-local PrevTab = Window:CreateTab("Preview", 4483362458)
-PrevTab:CreateSection("Target Preview")
-PrevTab:CreateToggle({Name = "Bật Preview 3D mục tiêu", CurrentValue = true, Flag = "PreviewToggle",
+-- ==================== UI: PREVIEW ====================
+local PrevTab = Window:Tab({ Title = "Preview" })
+local PrevSection = PrevTab:Section({ Title = "Target Preview" })
+
+PrevSection:Toggle({
+    Title = "Bật Preview 3D mục tiêu",
+    Value = PreviewEnabled,
     Callback = function(v)
         PreviewEnabled = v
         if PreviewFrame then PreviewFrame.Visible = v end
         if not v then ClearPreview() end
-    end})
-PrevTab:CreateButton({Name = "Reset vị trí Preview",
+        SaveConfig()
+    end
+})
+
+PrevSection:Button({
+    Title = "Reset vị trí Preview",
     Callback = function()
         if PreviewFrame then PreviewFrame.Position = UDim2.new(0, 20, 1, -220) end
-    end})
+    end
+})
 
--- Security
-local SecTab = Window:CreateTab("Security", 4483362458)
-SecTab:CreateSection("Moderator / Ghost")
-SecTab:CreateToggle({Name = "Cảnh báo Moderator", CurrentValue = true, Flag = "ModAlert",
-    Callback = function(v) ModeratorAlertEnabled = v end})
-SecTab:CreateToggle({Name = "Cảnh báo mục tiêu tàng hình", CurrentValue = true, Flag = "InvisAlert",
+-- ==================== UI: SECURITY ====================
+local SecTab = Window:Tab({ Title = "Security" })
+local ModSection = SecTab:Section({ Title = "Moderator / Ghost" })
+
+ModSection:Toggle({
+    Title = "Cảnh báo Moderator",
+    Value = ModeratorAlertEnabled,
+    Callback = function(v) ModeratorAlertEnabled = v; SaveConfig() end
+})
+
+ModSection:Toggle({
+    Title = "Cảnh báo mục tiêu tàng hình",
+    Value = InvisibleAlertEnabled,
     Callback = function(v)
         InvisibleAlertEnabled = v
         if not v then
@@ -1816,29 +2022,87 @@ SecTab:CreateToggle({Name = "Cảnh báo mục tiêu tàng hình", CurrentValue 
                 end
             end
         end
-    end})
-SecTab:CreateSlider({Name = "Ngưỡng frame tàng hình", Range = {1, 60}, Increment = 1, Suffix = "f",
-    CurrentValue = 1, Flag = "InvisFrames",
-    Callback = function(v) FLAG_CONSECUTIVE_FRAMES = v end})
-SecTab:CreateButton({Name = "Quét Moderator server",
+        SaveConfig()
+    end
+})
+
+ModSection:Slider({
+    Title = "Ngưỡng frame tàng hình",
+    Value = FLAG_CONSECUTIVE_FRAMES,
+    Min = 1,
+    Max = 60,
+    Rounding = 0,
+    Callback = function(v) FLAG_CONSECUTIVE_FRAMES = v; SaveConfig() end
+})
+
+ModSection:Button({
+    Title = "Quét Moderator server",
     Callback = function()
         local found = ScanForModerators(true)
-        if #found == 0 then
-            Rayfield:Notify({Title = "ETX", Content = "Không có moderator.", Duration = 3})
-        end
-    end})
+        if #found == 0 then Notify("Không có moderator.", 3) end
+    end
+})
 
--- Settings
-local SetTab = Window:CreateTab("Settings", 4483362458)
-SetTab:CreateButton({Name = "Xóa tất cả visuals",
+-- ==================== UI: SETTINGS ====================
+local SetTab = Window:Tab({ Title = "Settings" })
+local CfgSection = SetTab:Section({ Title = "Config" })
+
+CfgSection:Button({
+    Title = "Lưu config ngay",
+    Callback = function()
+        SaveConfig()
+        Notify("Đã lưu config.", 3)
+    end
+})
+
+CfgSection:Button({
+    Title = "Đọc lại config",
+    Callback = function()
+        local ok, count = LoadConfig()
+        if ok then Notify("Đã load " .. (count or 0) .. " giá trị. Restart script để áp dụng.", 5)
+        else Notify("Không có config hoặc lỗi đọc.", 3) end
+    end
+})
+
+CfgSection:Button({
+    Title = "Xóa config",
+    Callback = function()
+        ResetConfig()
+        Notify("Đã xóa config. Restart script để reset.", 4)
+    end
+})
+
+CfgSection:Toggle({
+    Title = "Tự động lưu khi đổi setting",
+    Value = AutoSaveEnabled,
+    Callback = function(v) AutoSaveEnabled = v; SaveConfig() end
+})
+
+CfgSection:Toggle({
+    Title = "Tự động lưu mỗi 30 giây",
+    Value = AutoSaveTimerEnabled,
+    Callback = function(v) AutoSaveTimerEnabled = v; SaveConfig() end
+})
+
+local CleanSection = SetTab:Section({ Title = "Cleanup" })
+
+CleanSection:Button({
+    Title = "Xóa tất cả visuals",
     Callback = function()
         for c in pairs(ESPObjects) do RemoveESP(c) end
         for m in pairs(VehicleObjects) do RemoveVehicleESP(m) end
         ClearAllSkeletons()
         ClearAllHats()
-        Rayfield:Notify({Title = "ETX", Content = "Đã xóa toàn bộ visuals.", Duration = 3})
-    end})
-SetTab:CreateButton({Name = "Reset UI", Callback = function() Rayfield:Destroy() end})
+        Notify("Đã xóa toàn bộ visuals.", 3)
+    end
+})
+
+CleanSection:Button({
+    Title = "Reset UI",
+    Callback = function()
+        pcall(function() Window:Destroy() end)
+    end
+})
 
 -- ==================== INPUT HANDLER ====================
 UserInputService.InputBegan:Connect(function(input, gp)
@@ -1847,7 +2111,7 @@ UserInputService.InputBegan:Connect(function(input, gp)
     if InputMatches(input) then
         if AimbotMode == "Toggle" then
             AimbotActive = not AimbotActive
-            if not AimbotActive then ClearTargetLock() end
+            if not AimbotActive then ClearTargetLock(true) end
         elseif AimbotMode == "Hold" then
             AimbotActive = true
         end
@@ -1859,7 +2123,7 @@ UserInputService.InputEnded:Connect(function(input, gp)
     if InputMatches(input) then
         if AimbotMode == "Hold" then
             AimbotActive = false
-            ClearTargetLock()
+            ClearTargetLock(true)
         end
     end
 end)
@@ -1867,15 +2131,11 @@ end)
 -- ==================== GUN WATCH ====================
 local function HookChar(char)
     task.wait(1)
-    if UpdateBulletSpeed() then
-        Rayfield:Notify({Title = "ETX | Wiki scan", Content = CurrentBulletSpeed .. " m/s", Duration = 2})
-    end
+    if UpdateBulletSpeed() then Notify("Wiki scan: " .. CurrentBulletSpeed .. " m/s", 2) end
     char.ChildAdded:Connect(function(c)
         if c:IsA("Tool") then
             task.wait(0.3)
-            if UpdateBulletSpeed() then
-                Rayfield:Notify({Title = "ETX | Wiki scan", Content = CurrentBulletSpeed .. " m/s", Duration = 2})
-            end
+            if UpdateBulletSpeed() then Notify("Wiki scan: " .. CurrentBulletSpeed .. " m/s", 2) end
         end
     end)
     char.ChildRemoved:Connect(function(c)
@@ -1887,12 +2147,37 @@ if LocalPlayer.Character then HookChar(LocalPlayer.Character) end
 
 -- ==================== INIT ====================
 CreatePreviewFrame()
+
+task.spawn(function()
+    task.wait(1)
+    if FullBrightEnabled then ApplyFullBright() end
+    if GrassRemoverEnabled then RemoveAllGrass() end
+    if LeavesRemoverEnabled then RemoveAllLeaves() end
+end)
+
 task.spawn(function() task.wait(3); ScanForModerators(true) end)
 
-Rayfield:Notify({
-    Title = "ETX v1.3 loaded",
-    Content = "Sticky target lock bật. RightShift mở UI.",
-    Duration = 6,
-})
+task.spawn(function()
+    task.wait(2)
+    if configLoaded then
+        Notify("Đã load " .. (configCount or 0) .. " giá trị từ config.", 5)
+    else
+        Notify("Không có config — dùng mặc định.", 4)
+    end
+end)
 
-print("[ETX v1.3] Project Delta loaded.")
+task.spawn(function()
+    while true do
+        task.wait(30)
+        if AutoSaveTimerEnabled then SaveConfig() end
+    end
+end)
+
+pcall(function()
+    game:BindToClose(function()
+        if AutoSaveEnabled then SaveConfig() end
+    end)
+end)
+
+Notify("ETX v1.3 loaded (Phosphorus UI). RightShift mở UI.", 6)
+print("[ETX v1.3] Project Delta loaded — Phosphorus UI.")
