@@ -1,5 +1,5 @@
 -- language: Lua, file: ETX_v1_3.lua, target: Roblox Project Delta
--- ETX v1.3 — Aimbot (lead prediction) + Wiki Bullet Drop + ESP (fixed scale) + HP Bar + Skeleton + China Hat + Vehicle ESP + Preview + Mod Check + FullBright + Map Cleanup
+-- ETX v1.3 — Aimbot (lead + sticky lock) + Wiki Bullet Drop + ESP (fixed scale) + HP Bar + Skeleton + China Hat + Vehicle ESP + Preview + Mod Check + FullBright + Map Cleanup
 
 -- ==================== SERVICES ====================
 local Players = game:GetService("Players")
@@ -40,6 +40,16 @@ local MaxDistance = 5000
 local CurrentBulletSpeed = nil
 local CapturingKey = false
 local CaptureConn = nil
+
+-- Target Lock (sticky aim)
+local TargetLockEnabled = true
+local LockedTarget = nil
+local LockReleaseFOVMult = 1.8
+local LockLostFrames = 0
+local LockLostGraceFrames = 30
+local LockSwitchFrames = 8
+local PendingSwitchTarget = nil
+local PendingSwitchCount = 0
 
 local TargetNPCEnabled = false
 
@@ -336,7 +346,7 @@ local function UpdateBulletSpeed()
     return false
 end
 
--- ==================== BALLISTIC PREDICTION (LEAD + DROP) ====================
+-- ==================== BALLISTIC PREDICTION ====================
 local function PredictTargetPosition(targetPart, speed)
     if not targetPart then return nil end
     local aimPos = targetPart.Position
@@ -365,6 +375,133 @@ local function PredictTargetPosition(targetPart, speed)
     aimPos = aimPos + Vector3.new(0, drop, 0)
 
     return aimPos
+end
+
+-- ==================== TARGET LOCK (STICKY AIM) ====================
+local function IsTargetValid(char, fovMult)
+    if not char or not char.Parent then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+
+    local myPos = Camera.CFrame.Position
+    local d = (root.Position - myPos).Magnitude
+    if d > MaxDistance then return false end
+
+    local sp, on = Camera:WorldToViewportPoint(root.Position)
+    if not on then return false end
+    local mousePos = UserInputService:GetMouseLocation()
+    local dm = (Vector2.new(sp.X, sp.Y) - mousePos).Magnitude
+    local fovLimit = FOV * (fovMult or 1)
+    if dm > fovLimit then return false end
+
+    return true
+end
+
+local function FindClosestInFOV(fovLimit)
+    local closest, shortest = nil, math.huge
+    local mousePos = UserInputService:GetMouseLocation()
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == LocalPlayer then continue end
+        local char = plr.Character
+        if not char then continue end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then continue end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then continue end
+        local d = (root.Position - Camera.CFrame.Position).Magnitude
+        if d > MaxDistance then continue end
+        local sp, on = Camera:WorldToViewportPoint(root.Position)
+        if not on then continue end
+        local dm = (Vector2.new(sp.X, sp.Y) - mousePos).Magnitude
+        if dm < fovLimit and dm < shortest then
+            shortest = dm
+            closest = char
+        end
+    end
+
+    if TargetNPCEnabled then
+        for _, npc in ipairs(Workspace:GetChildren()) do
+            if npc:IsA("Model") and npc:FindFirstChildOfClass("Humanoid") and npc:FindFirstChild("Head") then
+                if IsNPC(npc) then
+                    local hum = npc:FindFirstChildOfClass("Humanoid")
+                    if hum and hum.Health > 0 then
+                        local root = npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChild("Head")
+                        if root then
+                            local d = (root.Position - Camera.CFrame.Position).Magnitude
+                            if d > MaxDistance then continue end
+                            local sp, on = Camera:WorldToViewportPoint(root.Position)
+                            if not on then continue end
+                            local dm = (Vector2.new(sp.X, sp.Y) - mousePos).Magnitude
+                            if dm < fovLimit and dm < shortest then
+                                shortest = dm
+                                closest = npc
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+local function GetClosestTarget()
+    if not TargetLockEnabled then
+        return FindClosestInFOV(FOV)
+    end
+
+    if LockedTarget then
+        if IsTargetValid(LockedTarget, LockReleaseFOVMult) then
+            LockLostFrames = 0
+
+            local candidate = FindClosestInFOV(FOV)
+            if candidate and candidate ~= LockedTarget then
+                if PendingSwitchTarget == candidate then
+                    PendingSwitchCount = PendingSwitchCount + 1
+                else
+                    PendingSwitchTarget = candidate
+                    PendingSwitchCount = 1
+                end
+                if PendingSwitchCount >= LockSwitchFrames then
+                    LockedTarget = candidate
+                    PendingSwitchTarget = nil
+                    PendingSwitchCount = 0
+                end
+            else
+                PendingSwitchTarget = nil
+                PendingSwitchCount = 0
+            end
+
+            return LockedTarget
+        else
+            LockLostFrames = LockLostFrames + 1
+            if LockLostFrames < LockLostGraceFrames then
+                return LockedTarget
+            else
+                LockedTarget = nil
+                LockLostFrames = 0
+                PendingSwitchTarget = nil
+                PendingSwitchCount = 0
+            end
+        end
+    end
+
+    local found = FindClosestInFOV(FOV)
+    if found then
+        LockedTarget = found
+        LockLostFrames = 0
+    end
+    return found
+end
+
+local function ClearTargetLock()
+    LockedTarget = nil
+    LockLostFrames = 0
+    PendingSwitchTarget = nil
+    PendingSwitchCount = 0
 end
 
 -- ==================== FULLBRIGHT ====================
@@ -480,50 +617,7 @@ local function RestoreAllHidden()
     for _, obj in ipairs(list) do ShowObject(obj) end
 end
 
--- ==================== TARGET ACQUISITION ====================
-local function GetClosestTarget()
-    local closest, shortest = nil, math.huge
-    local mousePos = UserInputService:GetMouseLocation()
-
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr == LocalPlayer then continue end
-        local char = plr.Character
-        if not char then continue end
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if not hum or hum.Health <= 0 then continue end
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not root then continue end
-        local d = (root.Position - Camera.CFrame.Position).Magnitude
-        if d > MaxDistance then continue end
-        local sp, on = Camera:WorldToViewportPoint(root.Position)
-        if not on then continue end
-        local dm = (Vector2.new(sp.X, sp.Y) - mousePos).Magnitude
-        if dm < FOV and dm < shortest then shortest = dm; closest = char end
-    end
-
-    if TargetNPCEnabled then
-        for _, npc in ipairs(Workspace:GetChildren()) do
-            if npc:IsA("Model") and npc:FindFirstChildOfClass("Humanoid") and npc:FindFirstChild("Head") then
-                if IsNPC(npc) then
-                    local hum = npc:FindFirstChildOfClass("Humanoid")
-                    if hum and hum.Health > 0 then
-                        local root = npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChild("Head")
-                        if root then
-                            local d = (root.Position - Camera.CFrame.Position).Magnitude
-                            if d > MaxDistance then continue end
-                            local sp, on = Camera:WorldToViewportPoint(root.Position)
-                            if not on then continue end
-                            local dm = (Vector2.new(sp.X, sp.Y) - mousePos).Magnitude
-                            if dm < FOV and dm < shortest then shortest = dm; closest = npc end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return closest
-end
-
+-- ==================== AIMBOT ACTION ====================
 local function AimAt(target)
     if not target then return end
     local part = GetTargetPart(target, TargetPart)
@@ -1329,7 +1423,8 @@ RunService:BindToRenderStep("ETX_Aimbot", Enum.RenderPriority.Camera.Value + 1, 
 
     if TargetLine then
         if AimbotMaster and TargetLineEnabled then
-            local lineTarget = target or GetClosestTarget()
+            -- Line bám LockedTarget để khớp với aimbot; nếu chưa lock thì preview target gần nhất
+            local lineTarget = LockedTarget or GetClosestTarget()
             if lineTarget then
                 local part = GetTargetPart(lineTarget, TargetPart)
                 if part then
@@ -1350,7 +1445,7 @@ RunService:BindToRenderStep("ETX_Aimbot", Enum.RenderPriority.Camera.Value + 1, 
     if PreviewEnabled and PreviewFrame then
         local previewTarget = nil
         if AimbotMaster and TargetLineEnabled then
-            previewTarget = target or GetClosestTarget()
+            previewTarget = LockedTarget or GetClosestTarget()
         end
         SetPreviewTarget(previewTarget)
     end
@@ -1366,7 +1461,7 @@ RunService.RenderStepped:Connect(function()
             if char.Parent then EvaluateVisibility(char) end
         end
         if AimbotMaster and TargetLineEnabled then
-            local t = GetClosestTarget()
+            local t = LockedTarget or GetClosestTarget()
             if t then EvaluateVisibility(t) end
         end
     end
@@ -1457,12 +1552,20 @@ end
 local CombatTab = Window:CreateTab("Combat", 4483362458)
 CombatTab:CreateSection("Aimbot")
 CombatTab:CreateToggle({Name = "Bật Aimbot (Master)", CurrentValue = false, Flag = "AimbotMaster",
-    Callback = function(v) AimbotMaster = v; if not v then AimbotActive = false end end})
+    Callback = function(v)
+        AimbotMaster = v
+        if not v then
+            AimbotActive = false
+            ClearTargetLock()
+        end
+    end})
 CombatTab:CreateDropdown({Name = "Chế độ Keybind", Options = {"Toggle", "Hold", "Always"},
     CurrentOption = "Toggle", Flag = "AimbotMode",
     Callback = function(opt)
         AimbotMode = opt
-        if opt == "Always" then AimbotActive = true else AimbotActive = false end
+        if opt == "Always" then AimbotActive = true
+        else AimbotActive = false
+        ClearTargetLock() end
     end})
 CombatTab:CreateButton({Name = "Gán phím Aimbot", Callback = function() StartKeyCapture() end})
 CombatTab:CreateSlider({Name = "FOV", Range = {10, 500}, Increment = 10, Suffix = "px",
@@ -1476,7 +1579,6 @@ CombatTab:CreateToggle({Name = "Hiện Targetline", CurrentValue = true, Flag = 
 CombatTab:CreateToggle({Name = "Target NPC (tắt khi PvP)", CurrentValue = false, Flag = "TargetNPC",
     Callback = function(v) TargetNPCEnabled = v end})
 
--- Lead Prediction — ĐẶT NGAY CẠNH AIMBOT
 CombatTab:CreateSection("Dự đoán hướng đi")
 CombatTab:CreateToggle({Name = "Bật dự đoán hướng đi (Lead)", CurrentValue = true, Flag = "LeadToggle",
     Callback = function(v) PredictionLead = v end})
@@ -1486,7 +1588,24 @@ CombatTab:CreateSlider({Name = "Hệ số lead", Range = {0.5, 2.0}, Increment =
 CombatTab:CreateToggle({Name = "Lead cả trục Y (địch nhảy/rơi)", CurrentValue = false, Flag = "LeadVert",
     Callback = function(v) PredictionLeadVertical = v end})
 
--- Prediction (bullet drop + wiki scan)
+CombatTab:CreateSection("Target Lock")
+CombatTab:CreateToggle({Name = "Ghim mục tiêu (không tự đổi)", CurrentValue = true, Flag = "TargetLockToggle",
+    Callback = function(v)
+        TargetLockEnabled = v
+        if not v then ClearTargetLock() end
+    end})
+CombatTab:CreateSlider({Name = "Hệ số FOV nhả lock", Range = {1.0, 3.0}, Increment = 0.1, Suffix = "x",
+    CurrentValue = 1.8, Flag = "LockReleaseMult",
+    Callback = function(v) LockReleaseFOVMult = v end})
+CombatTab:CreateSlider({Name = "Grace mất dấu (frame)", Range = {5, 120}, Increment = 5, Suffix = "f",
+    CurrentValue = 30, Flag = "LockGrace",
+    Callback = function(v) LockLostGraceFrames = v end})
+CombatTab:CreateSlider({Name = "Frame để đổi target", Range = {1, 30}, Increment = 1, Suffix = "f",
+    CurrentValue = 8, Flag = "LockSwitch",
+    Callback = function(v) LockSwitchFrames = v end})
+CombatTab:CreateButton({Name = "Nhả lock ngay", Callback = function() ClearTargetLock() end})
+
+-- Prediction (bullet drop)
 local PredTab = Window:CreateTab("Prediction", 4483362458)
 PredTab:CreateSection("Bullet Drop (Wiki-based)")
 PredTab:CreateToggle({Name = "Bật Bullet Drop", CurrentValue = true, Flag = "PredToggle",
@@ -1726,15 +1845,22 @@ UserInputService.InputBegan:Connect(function(input, gp)
     if CapturingKey then return end
     if gp and input.UserInputType == Enum.UserInputType.Keyboard then return end
     if InputMatches(input) then
-        if AimbotMode == "Toggle" then AimbotActive = not AimbotActive
-        elseif AimbotMode == "Hold" then AimbotActive = true end
+        if AimbotMode == "Toggle" then
+            AimbotActive = not AimbotActive
+            if not AimbotActive then ClearTargetLock() end
+        elseif AimbotMode == "Hold" then
+            AimbotActive = true
+        end
     end
 end)
 
 UserInputService.InputEnded:Connect(function(input, gp)
     if CapturingKey then return end
     if InputMatches(input) then
-        if AimbotMode == "Hold" then AimbotActive = false end
+        if AimbotMode == "Hold" then
+            AimbotActive = false
+            ClearTargetLock()
+        end
     end
 end)
 
@@ -1765,7 +1891,7 @@ task.spawn(function() task.wait(3); ScanForModerators(true) end)
 
 Rayfield:Notify({
     Title = "ETX v1.3 loaded",
-    Content = "Lead prediction trong tab Combat. RightShift mở UI.",
+    Content = "Sticky target lock bật. RightShift mở UI.",
     Duration = 6,
 })
 
