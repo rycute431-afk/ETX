@@ -29,7 +29,6 @@ local function Stroke(p, color, thick, trans)
     return C("UIStroke", {Color=color or Theme.Border, Thickness=thick or 1, Transparency=trans or 0.3}, p)
 end
 
--- Forward declarations
 local ClearAllSkeletons
 local ClearAllHats
 
@@ -252,27 +251,30 @@ local function CreateWindow(opts)
     end
     return win
 end
+
 -- ==================== STATE ====================
 local AimbotMaster=false; local AimbotActive=false; local AimbotKeybind="Y"; local AimbotMode="Toggle"
 local FOV=150; local TargetPart="Head"; local PredictionEnabled=true
 local PredictionLead=true; local PredictionLeadMultiplier=1.0; local PredictionLeadVertical=false
-local BulletSpeed=715; local BulletGravity=196.2; local Smoothness=0.15; local MaxDistance=5000
+local BulletSpeed=715; local BulletGravity=196.2; local Smoothness=0.15; local MaxDistance=3000  -- ← đổi 5000→3000
 local CurrentBulletSpeed=nil; local CapturingKey=false; local CaptureConn=nil
 local AutoSaveEnabled=true; local AutoSaveTimerEnabled=false
 local TargetLockEnabled=true; local LockedTarget=nil; local ExcludedTarget=nil
 local LockReleaseFOVMult=1.8; local LockLostFrames=0; local LockLostGraceFrames=30
 local LockSwitchFrames=8; local PendingSwitchTarget=nil; local PendingSwitchCount=0
-local TargetNPCEnabled=false; local ESPNPCEnabled=true; local ESPDistanceEnabled=true
+local TargetNPCEnabled=false
 local ESPEnabled=false; local ESPTransparency=0.5; local ESPColor=Color3.fromRGB(0,255,0); local ESPObjects={}
+local ESPNPCEnabled=true      -- toggle NPC ESP
+local ESPNPCMasterEnabled=true -- master switch cho NPC trong render loop
+local ESPDistanceEnabled=true
 local ESPDynamicScale=true; local ESPMaxScale=1.0; local ESPMinScale=0.75
 local ESPNearDistance=100; local ESPFarDistance=400
 local HPBarEnabled=true; local HPBarWidth=120
 local HPColorHigh=Color3.fromRGB(0,255,0); local HPColorMid=Color3.fromRGB(255,200,0); local HPColorLow=Color3.fromRGB(255,40,40)
 local SkeletonEnabled=true; local SkeletonColor=Color3.fromRGB(255,255,255); local SkeletonThickness=1; local SkeletonObjects={}
 local ChinaHatEnabled=true; local ChinaHatColor=Color3.fromRGB(220,30,30); local ChinaHatScale=1; local ChinaHatObjects={}
-local VehicleESPEnabled=true; local VehicleESPColor=Color3.fromRGB(0,200,255); local VehicleESPTransparency=0.5; local VehicleObjects={}
-local ContainerESPEnabled=false; local ContainerESPColor=Color3.fromRGB(255,180,60); local ContainerESPTransparency=0.5; local ContainerObjects={}
-local VEHICLE_KEYWORDS={"mi24","mi-24","mi_24","hind","helicopter","heli","chopper","uh60","uh-60","blackhawk","ah64","ah-64","apache","military","vehicle","aircraft","jet","plane"}
+local ContainerESPEnabled=false; local ContainerESPMasterEnabled=true  -- master switch container
+local ContainerESPColor=Color3.fromRGB(255,180,60); local ContainerESPTransparency=0.5; local ContainerObjects={}
 local CONTAINER_KEYWORDS={"box","container","crate","case","loot","stash","chest","safe","abpopa","military box"}
 local PreviewEnabled=true; local PreviewFrame=nil; local PreviewWorld=nil; local PreviewCam=nil; local PreviewTarget=nil
 local ModeratorAlertEnabled=true; local InvisibleAlertEnabled=true; local INVIS_THRESHOLD=0.98
@@ -389,6 +391,7 @@ local ConfigSchema = {
     ESPTransparency={get=function() return ESPTransparency end, set=function(v) ESPTransparency=v end},
     ESPColor={get=function() return ColStr(ESPColor) end, set=function(v) ESPColor=StrCol(v) end},
     ESPNPCEnabled={get=function() return ESPNPCEnabled end, set=function(v) ESPNPCEnabled=v end},
+    ESPNPCMasterEnabled={get=function() return ESPNPCMasterEnabled end, set=function(v) ESPNPCMasterEnabled=v end},
     ESPDistanceEnabled={get=function() return ESPDistanceEnabled end, set=function(v) ESPDistanceEnabled=v end},
     ESPDynamicScale={get=function() return ESPDynamicScale end, set=function(v) ESPDynamicScale=v end},
     ESPMaxScale={get=function() return ESPMaxScale end, set=function(v) ESPMaxScale=v end},
@@ -403,10 +406,8 @@ local ConfigSchema = {
     ChinaHatEnabled={get=function() return ChinaHatEnabled end, set=function(v) ChinaHatEnabled=v end},
     ChinaHatScale={get=function() return ChinaHatScale end, set=function(v) ChinaHatScale=v end},
     ChinaHatColor={get=function() return ColStr(ChinaHatColor) end, set=function(v) ChinaHatColor=StrCol(v) end},
-    VehicleESPEnabled={get=function() return VehicleESPEnabled end, set=function(v) VehicleESPEnabled=v end},
-    VehicleESPTransparency={get=function() return VehicleESPTransparency end, set=function(v) VehicleESPTransparency=v end},
-    VehicleESPColor={get=function() return ColStr(VehicleESPColor) end, set=function(v) VehicleESPColor=StrCol(v) end},
     ContainerESPEnabled={get=function() return ContainerESPEnabled end, set=function(v) ContainerESPEnabled=v end},
+    ContainerESPMasterEnabled={get=function() return ContainerESPMasterEnabled end, set=function(v) ContainerESPMasterEnabled=v end},
     ContainerESPTransparency={get=function() return ContainerESPTransparency end, set=function(v) ContainerESPTransparency=v end},
     ContainerESPColor={get=function() return ColStr(ContainerESPColor) end, set=function(v) ContainerESPColor=StrCol(v) end},
     PreviewEnabled={get=function() return PreviewEnabled end, set=function(v) PreviewEnabled=v end},
@@ -457,13 +458,6 @@ local function ApplyESPScale(data, s)
     data.DistLabel.Position = UDim2.new(0, 0, 0, 24*s)
     data.HPText.Position = UDim2.new(0, 0, 0, 39*s)
     data.Billboard.StudsOffset = Vector3.new(0, 3.2*math.max(0.8,s), 0)
-end
-local function ApplyVehicleScale(data, s)
-    data.Billboard.Size = UDim2.new(0, data.BaseBB.X*s, 0, data.BaseBB.Y*s)
-    data.NameLabel.TextSize = math.max(11, data.BaseNameSize*s)
-    data.DistLabel.TextSize = math.max(10, data.BaseDistSize*s)
-    data.DistLabel.Position = UDim2.new(0, 0, 0, 18*s)
-    data.Billboard.StudsOffset = Vector3.new(0, 6*math.max(0.8,s), 0)
 end
 
 -- GUN SCAN
@@ -737,12 +731,17 @@ local function UpdateESP()
         if ClearAllHats then ClearAllHats() end
         return
     end
+    -- player ESP selalu jalan kalau ESPEnabled
     for _, p in ipairs(Players:GetPlayers()) do if p~=LP and p.Character then CreateESP(p.Character) end end
-    if ESPNPCEnabled then
+    -- NPC ESP hanya kalau dua flag aktif
+    if ESPNPCEnabled and ESPNPCMasterEnabled then
         for _, n in ipairs(ScanAllNPCs()) do if n and n.Parent then CreateESP(n) end end
     end
     for c, d in pairs(ESPObjects) do
         if not c or not c.Parent then RemoveESP(c); continue end
+        -- nếu là NPC và NPC ESP tắt thì xóa
+        local isNPC = Players:GetPlayerFromCharacter(c) == nil
+        if isNPC and (not ESPNPCEnabled or not ESPNPCMasterEnabled) then RemoveESP(c); continue end
         local h = c:FindFirstChildOfClass("Humanoid")
         local r = c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("Head") or c:FindFirstChild("UpperTorso") or c:FindFirstChild("Torso")
         if r and d.Billboard then
@@ -767,64 +766,6 @@ local function UpdateESP()
                     else d.HPFill.BackgroundColor3 = HPColorLow end
                     d.HPBg.Visible = HPBarEnabled; d.HPText.Visible = HPBarEnabled
                 end
-            end
-        end
-    end
-end
-
--- VEHICLE ESP
-function NameMatchVeh(n)
-    local l = string.lower(n)
-    for _, k in ipairs(VEHICLE_KEYWORDS) do if l:find(k,1,true) then return true end end
-    return false
-end
-local function IsVehicle(m)
-    if not m or not m:IsA("Model") then return false end
-    if m:FindFirstChildOfClass("Humanoid") then return false end
-    if Players:GetPlayerFromCharacter(m) then return false end
-    if NameMatchVeh(m.Name) then return true end
-    if m:FindFirstChildWhichIsA("VehicleSeat") or m:FindFirstChildWhichIsA("Seat") then return true end
-    return false
-end
-local function CreateVehicleESP(m)
-    if VehicleObjects[m] then return end
-    local a = m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart"); if not a then return end
-    local bb = Instance.new("BillboardGui")
-    bb.Size = UDim2.new(0,180,0,40); bb.StudsOffset = Vector3.new(0,6,0); bb.AlwaysOnTop = true; bb.Parent = a
-    local nl = Instance.new("TextLabel")
-    nl.Size = UDim2.new(1,0,0,18); nl.BackgroundTransparency = 1; nl.TextColor3 = VehicleESPColor
-    nl.TextStrokeTransparency = 0.2; nl.TextStrokeColor3 = Color3.fromRGB(0,0,0); nl.TextSize = 15
-    nl.Font = Enum.Font.SourceSansBold; nl.Text = m.Name; nl.Parent = bb
-    local dl = Instance.new("TextLabel")
-    dl.Size = UDim2.new(1,0,0,16); dl.Position = UDim2.new(0,0,0,18); dl.BackgroundTransparency = 1
-    dl.TextColor3 = VehicleESPColor; dl.TextStrokeTransparency = 0.2; dl.TextStrokeColor3 = Color3.fromRGB(0,0,0)
-    dl.TextSize = 13; dl.Font = Enum.Font.SourceSans; dl.Text = "[0m]"; dl.Parent = bb
-    local hl = Instance.new("Highlight")
-    hl.FillColor = VehicleESPColor; hl.FillTransparency = VehicleESPTransparency
-    hl.OutlineColor = Color3.fromRGB(255,255,255); hl.OutlineTransparency = 0.5; hl.Adornee = m; hl.Parent = m
-    VehicleObjects[m] = {Billboard=bb, NameLabel=nl, DistLabel=dl, Highlight=hl, Model=m, Anchor=a, BaseBB=Vector2.new(180,40), BaseNameSize=15, BaseDistSize=13}
-end
-local function RemoveVehicleESP(m)
-    local d = VehicleObjects[m]
-    if d then if d.Billboard then d.Billboard:Destroy() end; if d.Highlight then d.Highlight:Destroy() end; VehicleObjects[m]=nil end
-end
-local function UpdateVehicleESP()
-    if not VehicleESPEnabled or not ESPEnabled then
-        for m in pairs(VehicleObjects) do RemoveVehicleESP(m) end; return
-    end
-    for _, o in ipairs(Workspace:GetDescendants()) do if o:IsA("Model") and IsVehicle(o) then CreateVehicleESP(o) end end
-    for m, d in pairs(VehicleObjects) do
-        if not m or not m.Parent then RemoveVehicleESP(m); continue end
-        local a = m.PrimaryPart or d.Anchor
-        if a and a.Parent and d.Billboard then
-            local dist = (a.Position-Camera.CFrame.Position).Magnitude
-            if dist > MaxDistance then d.Billboard.Enabled = false; d.Highlight.Enabled = false
-            else
-                d.Billboard.Enabled = true; d.Highlight.Enabled = true; d.Billboard.Adornee = a
-                d.DistLabel.Text = "["..math.floor(dist).."m]"
-                d.DistLabel.Visible = ESPDistanceEnabled
-                d.NameLabel.Text = m.Name
-                ApplyVehicleScale(d, GetDistanceScale(dist))
             end
         end
     end
@@ -875,7 +816,7 @@ local function RemoveContainerESP(m)
     if d then if d.Billboard then d.Billboard:Destroy() end; if d.Highlight then d.Highlight:Destroy() end; ContainerObjects[m]=nil end
 end
 local function UpdateContainerESP()
-    if not ContainerESPEnabled or not ESPEnabled then
+    if not ContainerESPEnabled or not ContainerESPMasterEnabled or not ESPEnabled then
         for m in pairs(ContainerObjects) do RemoveContainerESP(m) end; return
     end
     for _, o in ipairs(Workspace:GetDescendants()) do
@@ -1152,6 +1093,7 @@ local function SyncPreviewAnimation()
         end
     end
 end
+
 -- ==================== BUILD UI ====================
 local Window = CreateWindow({Title="ETX v2.3", Subtitle="Project Delta"})
 
@@ -1207,19 +1149,32 @@ PRED:Slider({Title="Trọng lực", Value=BulletGravity, Min=50, Max=500, Roundi
 local ESPTab = Window:Tab({Title="ESP", Short="ESP"})
 local EV = ESPTab:Section({Title="Visuals"})
 EV:Toggle({Title="Bật ESP", Value=ESPEnabled, Callback=function(v) ESPEnabled=v; SaveConfig() end})
-EV:Toggle({Title="ESP NPC (bandit, boss)", Value=ESPNPCEnabled, Callback=function(v) ESPNPCEnabled=v; SaveConfig() end})
 EV:Toggle({Title="Hiện khoảng cách [Xm]", Value=ESPDistanceEnabled, Callback=function(v)
     ESPDistanceEnabled = v
     for _, d in pairs(ESPObjects) do if d.DistLabel then d.DistLabel.Visible = v end end
-    for _, d in pairs(VehicleObjects) do if d.DistLabel then d.DistLabel.Visible = v end end
     for _, d in pairs(ContainerObjects) do if d.DistLabel then d.DistLabel.Visible = v end end
     SaveConfig()
 end})
-EV:Slider({Title="Khoảng cách tối đa", Value=MaxDistance, Min=100, Max=30000, Rounding=0, Suffix="m", Callback=function(v) MaxDistance=v; SaveConfig() end})
+EV:Slider({Title="Khoảng cách tối đa", Value=MaxDistance, Min=100, Max=3000, Rounding=0, Suffix="m", Callback=function(v) MaxDistance=v; SaveConfig() end})
 EV:Slider({Title="Độ trong suốt", Value=ESPTransparency, Min=0, Max=1, Rounding=2, Callback=function(v) ESPTransparency=v; for _, d in pairs(ESPObjects) do if d.Highlight then d.Highlight.FillTransparency = v end end; SaveConfig() end})
 EV:ColorPicker({Title="Màu ESP", Color=ESPColor, Callback=function(c) ESPColor=c; for _, d in pairs(ESPObjects) do if d.NameLabel then d.NameLabel.TextColor3 = c end; if d.DistLabel then d.DistLabel.TextColor3 = c end; if d.Highlight then d.Highlight.FillColor = c end end; SaveConfig() end})
 
-local SCALE = ESPTab:Section({Title="Fixed Scale"})
+-- NPC ESP section riêng với toggle bật/tắt
+local NPC_SEC = ESPTab:Section({Title="NPC ESP"})
+NPC_SEC:Toggle({Title="Bật ESP NPC", Value=ESPNPCMasterEnabled, Callback=function(v)
+    ESPNPCMasterEnabled = v
+    if not v then
+        -- xóa hết NPC ESP đang active
+        for c in pairs(ESPObjects) do
+            if Players:GetPlayerFromCharacter(c) == nil then RemoveESP(c) end
+        end
+        ClearAllSkeletons(); ClearAllHats()
+    end
+    SaveConfig()
+end})
+NPC_SEC:Toggle({Title="Aimbot target NPC", Value=ESPNPCEnabled, Callback=function(v) ESPNPCEnabled=v; SaveConfig() end})
+
+local SCALE = ESPTab:Section({Title="Dynamic Scale"})
 SCALE:Toggle({Title="Scale theo khoảng cách", Value=ESPDynamicScale, Callback=function(v) ESPDynamicScale=v; SaveConfig() end})
 SCALE:Slider({Title="Scale tối đa", Value=ESPMaxScale, Min=0.8, Max=1.5, Rounding=2, Suffix="x", Callback=function(v) ESPMaxScale=v; SaveConfig() end})
 SCALE:Slider({Title="Scale tối thiểu", Value=ESPMinScale, Min=0.5, Max=1, Rounding=2, Suffix="x", Callback=function(v) ESPMinScale=v; SaveConfig() end})
@@ -1240,16 +1195,17 @@ HAT:Toggle({Title="Bật China Hat", Value=ChinaHatEnabled, Callback=function(v)
 HAT:Slider({Title="Scale", Value=ChinaHatScale, Min=0.5, Max=3, Rounding=1, Suffix="x", Callback=function(v) ChinaHatScale=v; for _, h in pairs(ChinaHatObjects) do h.Size = Vector3.new(2,2.4,2.4)*v; local m = h:FindFirstChildOfClass("SpecialMesh"); if m then m.Scale = Vector3.new(v,v,v) end end; SaveConfig() end})
 HAT:ColorPicker({Title="Màu China Hat", Color=ChinaHatColor, Callback=function(c) ChinaHatColor=c; SaveConfig() end})
 
-local VEH = ESPTab:Section({Title="Vehicle / Aircraft"})
-VEH:Toggle({Title="Bật ESP Vehicle", Value=VehicleESPEnabled, Callback=function(v) VehicleESPEnabled=v; if not v then for m in pairs(VehicleObjects) do RemoveVehicleESP(m) end end; SaveConfig() end})
-VEH:Slider({Title="Độ trong suốt Vehicle", Value=VehicleESPTransparency, Min=0, Max=1, Rounding=2, Callback=function(v) VehicleESPTransparency=v; for _, d in pairs(VehicleObjects) do if d.Highlight then d.Highlight.FillTransparency = v end end; SaveConfig() end})
-VEH:ColorPicker({Title="Màu Vehicle ESP", Color=VehicleESPColor, Callback=function(c) VehicleESPColor=c; for _, d in pairs(VehicleObjects) do if d.NameLabel then d.NameLabel.TextColor3 = c end; if d.DistLabel then d.DistLabel.TextColor3 = c end; if d.Highlight then d.Highlight.FillColor = c end end; SaveConfig() end})
-
+-- Container ESP section với toggle riêng
 local CONT = ESPTab:Section({Title="Container / Loot Box"})
-CONT:Toggle({Title="Bật ESP Container", Value=ContainerESPEnabled, Callback=function(v) ContainerESPEnabled=v; if not v then for m in pairs(ContainerObjects) do RemoveContainerESP(m) end end; SaveConfig() end})
+CONT:Toggle({Title="Bật ESP Container", Value=ContainerESPMasterEnabled, Callback=function(v)
+    ContainerESPMasterEnabled = v
+    if not v then for m in pairs(ContainerObjects) do RemoveContainerESP(m) end end
+    SaveConfig()
+end})
+CONT:Toggle({Title="Hiện Container", Value=ContainerESPEnabled, Callback=function(v) ContainerESPEnabled=v; if not v then for m in pairs(ContainerObjects) do RemoveContainerESP(m) end end; SaveConfig() end})
 CONT:Slider({Title="Độ trong suốt", Value=ContainerESPTransparency, Min=0, Max=1, Rounding=2, Callback=function(v) ContainerESPTransparency=v; for _, d in pairs(ContainerObjects) do if d.Highlight then d.Highlight.FillTransparency = v end end; SaveConfig() end})
 CONT:ColorPicker({Title="Màu Container ESP", Color=ContainerESPColor, Callback=function(c) ContainerESPColor=c; for _, d in pairs(ContainerObjects) do if d.NameLabel then d.NameLabel.TextColor3 = c end; if d.DistLabel then d.DistLabel.TextColor3 = c end; if d.Highlight then d.Highlight.FillColor = c end end; SaveConfig() end})
-CONT:Paragraph({Content="Nhận diện qua tên (Box, Container, Crate...) hoặc attribute ContainerSize / StorageSlots. Nếu không bắt được, gửi tên model chính xác."})
+CONT:Paragraph({Content="Nhận diện qua tên (Box, Container, Crate...) hoặc attribute ContainerSize / StorageSlots."})
 
 local VisTab = Window:Tab({Title="Visuals", Short="VIS"})
 local LIGHT = VisTab:Section({Title="Lighting"})
@@ -1327,7 +1283,6 @@ CFG:Toggle({Title="Auto-save mỗi 30s", Value=AutoSaveTimerEnabled, Callback=fu
 local CLEAN = SetTab:Section({Title="Cleanup"})
 CLEAN:Button({Title="Xóa tất cả visuals", ButtonText="Clear", Callback=function()
     for c in pairs(ESPObjects) do RemoveESP(c) end
-    for m in pairs(VehicleObjects) do RemoveVehicleESP(m) end
     for m in pairs(ContainerObjects) do RemoveContainerESP(m) end
     ClearAllSkeletons(); ClearAllHats()
     Notify("ETX", "Đã xóa visuals.", 3)
@@ -1344,9 +1299,8 @@ RunService:BindToRenderStep("ETX_Aimbot", Enum.RenderPriority.Camera.Value+1, fu
         FOVCircle.Position = Vector2.new(vp.X/2, vp.Y/2)
         FOVCircle.Color = AimbotActive and Theme.Accent or Color3.fromRGB(255,255,255)
     end
-    local target = nil
     if AimbotMaster and AimbotActive then
-        target = GetClosestTarget()
+        local target = GetClosestTarget()
         if target then AimAt(target) end
     end
     if TargetLine then
@@ -1376,7 +1330,7 @@ RunService:BindToRenderStep("ETX_Aimbot", Enum.RenderPriority.Camera.Value+1, fu
 end)
 
 RunService.RenderStepped:Connect(function()
-    UpdateESP(); UpdateVehicleESP(); UpdateContainerESP(); SyncPreviewAnimation()
+    UpdateESP(); UpdateContainerESP(); SyncPreviewAnimation()
 
     if InvisibleAlertEnabled then
         for c in pairs(ESPObjects) do if c.Parent then EvaluateVisibility(c) end end
@@ -1397,7 +1351,7 @@ RunService.RenderStepped:Connect(function()
         for _, p in ipairs(Players:GetPlayers()) do
             if p~=LP and p.Character then CreateSkeleton(p.Character); UpdateSkeleton(p.Character) end
         end
-        if ESPNPCEnabled then
+        if ESPNPCEnabled and ESPNPCMasterEnabled then
             for _, n in ipairs(ScanAllNPCs()) do if n and n.Parent then CreateSkeleton(n); UpdateSkeleton(n) end end
         end
         for c in pairs(SkeletonObjects) do if not c.Parent then RemoveSkeleton(c) end end
@@ -1407,7 +1361,7 @@ RunService.RenderStepped:Connect(function()
         for _, p in ipairs(Players:GetPlayers()) do
             if p~=LP and p.Character then CreateChinaHat(p.Character); UpdateChinaHat(p.Character) end
         end
-        if ESPNPCEnabled then
+        if ESPNPCEnabled and ESPNPCMasterEnabled then
             for _, n in ipairs(ScanAllNPCs()) do if n and n.Parent then CreateChinaHat(n); UpdateChinaHat(n) end end
         end
         for c in pairs(ChinaHatObjects) do if not c.Parent then RemoveChinaHat(c) end end
@@ -1462,5 +1416,5 @@ task.spawn(function()
 end)
 pcall(function() game:BindToClose(function() if AutoSaveEnabled then SaveConfig() end end) end)
 
-Notify("ETX v2.3 loaded", "NPC scanner + Container ESP. RightShift mở UI.", 6)
+Notify("ETX v2.3 loaded", "MaxDist 3000m | NPC+Container toggle. RightShift mở UI.", 6)
 print("[ETX v2.3] Project Delta loaded.")
